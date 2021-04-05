@@ -20,7 +20,7 @@ end
 bord = calib.params.bord;
 bord_bias = calib.params.bord_bias;
 % dT = calib.params.dT;
-dT = 10e-3;
+dT = 30e-3;
 dT_bias = calib.params.dT_bias;
 
 
@@ -92,7 +92,7 @@ cabias = repmat(abias', [nknot_bias, 1]);
 
 %% Optimize
 
-x0 = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)];
+x0 = [cq(:); cs(:); cwbias(:); cabias(:); tshift];
 % x0 = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13];
 
 iters = 30;
@@ -102,14 +102,16 @@ x = x0;
 for i = 1 : iters
     tic
     [dx, fval] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
-        bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab);
+        bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab, Tw, Ta, r, g13, ri);
     titer = toc;
 
     if any(isnan(dx))
         warning('Went NAN')
         break
     end
+%     dx(nknot*6 + nknot_bias*6 + [1:23, 24+(1:nmarkers*3)]) = 0;
     x = x + dx;
+    
     X(i,:) = x;
     Fval(i) = fval;
     fprintf('Iter %2d)\tCost: %.4e\tDuration: %.3f\n', i, fval, titer)
@@ -124,20 +126,20 @@ cq1 = reshape(x(1:3*nknot), [], 3);
 cs1 = reshape(x(3*nknot + (1:3*nknot)), [], 3);
 cwbias1 = reshape(x(6*nknot + (1:3*nknot_bias)), [], 3);
 cabias1 = reshape(x(6*nknot + 3*nknot_bias + (1:3*nknot_bias)), [], 3);
-Tw1 = reshape(x(6*nknot + 6*nknot_bias + (1:9)), 3, 3);
-Ta1 = reshape(x(6*nknot + 6*nknot_bias + (10:18)), 3, 3);
-r1 = reshape(x(6*nknot + 6*nknot_bias + (19:21)), 3, 1);
-g131 = reshape(x(6*nknot + 6*nknot_bias + (22:23)), 2, 1);
-tshift1 = reshape(x(6*nknot + 6*nknot_bias + 24), 1, 1);
-ri1 = reshape(x(6*nknot + 6*nknot_bias + 24 + (1:nmarkers*3)), 3, []);
+% Tw1 = reshape(x(6*nknot + 6*nknot_bias + (1:9)), 3, 3);
+% Ta1 = reshape(x(6*nknot + 6*nknot_bias + (10:18)), 3, 3);
+% r1 = reshape(x(6*nknot + 6*nknot_bias + (19:21)), 3, 1);
+% g131 = reshape(x(6*nknot + 6*nknot_bias + (22:23)), 2, 1);
+tshift1 = reshape(x(6*nknot + 6*nknot_bias + 1), 1, 1);
+% ri1 = reshape(x(6*nknot + 6*nknot_bias + 24 + (1:nmarkers*3)), 3, []);
 
 % this should not change much from calib
-out_calib = struct('Tw', Tw1, 'Ta', Ta1, 'r', r1, 'g13', g131, 'tshift', tshift1, 'ri', ri1, ...
-    'params', struct('bord', bord, 'bord_bias', bord_bias, 'dT', dT, 'dT_bias', dT_bias, ...
-    'Fs_omc', Fs_omc, 'Fs_imu', Fs_imu));
+out_calib = [];%struct('Tw', Tw1, 'Ta', Ta1, 'r', r1, 'g13', g131, 'tshift', tshift1, 'ri', ri1, ...
+%     'params', struct('bord', bord, 'bord_bias', bord_bias, 'dT', dT, 'dT_bias', dT_bias, ...
+%     'Fs_omc', Fs_omc, 'Fs_imu', Fs_imu));
 
 solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
-        bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab);
+        bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab, Tw, Ta, r, g13, ri);
     
 % eval on desired time ============================================
 time_norm = (tout - t0) / dT + tshift;
@@ -147,11 +149,22 @@ time_norm_shift = time_norm;
 time_norm_shift(time_norm_shift < 0) = 0;
 time_norm_shift(time_norm_shift > length(cq1)-bord) = length(cq1)-bord;
 
-qf = bspline_eval(cq, time_norm_shift, out_calib.params.bord);
-sf = bspline_eval(cs, time_norm_shift, out_calib.params.bord);
+qf = bspline_eval(cq, time_norm_shift, calib.params.bord);
+sf = bspline_eval(cs, time_norm_shift, calib.params.bord);
 
 quatf = angle2quat(qf(:,2), qf(:,3), qf(:,1), 'YZX');
-transf = sf - quatrotate(quatinv(quatf), r1');
+transf = sf - quatrotate(quatinv(quatf), calib.r');
+
+%%
+
+% figure, 
+% h1 = subplot(211); plot(time, trans, '.-')
+% hold on, plot(tout, transf, '-'), grid on
+% % xlim(trange)
+% h2 = subplot(212); plot(time, quat, '.-')
+% hold on, plot(tout, quatf, '-'), grid on
+% % xlim(trange)
+% linkaxes([h1, h2], 'x')
 
 end
 
@@ -205,7 +218,6 @@ function [cq, wbias] = bspline_fit_orientation(...
     kk, quat, kk2, wimu, Tw, bord, dt, nknot)
 
     [q1, q2, q3] = quat2angle(quat, 'YZX');
-%     q1 = unwrap(q1);
     q = unwrap([q3, q1, q2]);
     w = wimu * inv(Tw)';
 
@@ -213,7 +225,7 @@ function [cq, wbias] = bspline_fit_orientation(...
     A1 = generate_predictor_matrix(bord, kk, nknot, 1);
     b1 = q;
 
-    % velocity ================================================
+%     % velocity ================================================
 %     A2 = generate_predictor_matrix(bord, kk2, nknot, 2) / dt;
 %     b2 = w;
 % 
@@ -221,7 +233,7 @@ function [cq, wbias] = bspline_fit_orientation(...
 %     A = [A1, zeros(size(A1,1), 1)
 %           A2,  ones(size(A2,1), 1)];
 %     b = [b1; b2];
-%     W = blkdiag(speye(length(kk)), 1*speye(length(kk2)));  % weight
+%     W = blkdiag(speye(length(kk)), 0.1*speye(length(kk2)));  % weight
 %     cq_bias = (A' * W * A) \ (A' * W * b);
     cq_bias = [A1 \ b1; zeros(1, 3)];
     
@@ -250,7 +262,7 @@ function [cs, grav] = bspline_fit_translation(...
     kk, quat, trans, kk2, aimu, Ta, r, abias, bord, dt, nknot)
     % fit cs as the IMU position
 
-    trans_imu = trans + quatrotate(quat, r');
+    trans_imu = trans + quatrotate(quatinv(quat), r');
     quat_interp = quatnormalize(interp1(kk, quat, kk2, 'pchip', 'extrap'));
     as = quatrotate(quatinv(quat_interp), (aimu - abias') * inv(Ta)');
 
@@ -259,17 +271,17 @@ function [cs, grav] = bspline_fit_translation(...
     b1 = trans_imu;
 
     % acceleration ================================================
-%     A2 = generate_predictor_matrix(bord, kk2, nknot, 3) / dt^2;
-%     b2 = as;
-% 
-%     % combine ==================================================
-%     A = [A1, zeros(size(A1,1), 1)
-%           A2,  ones(size(A2,1), 1)];
-%     b = [b1; b2];
-%     W = blkdiag(speye(length(kk)), 1*speye(length(kk2)));  % weight
-%     cs_grav = (A' * W * A) \ (A' * W * b);
+    A2 = generate_predictor_matrix(bord, kk2, nknot, 3) / dt^2;
+    b2 = as;
+
+    % combine ==================================================
+    A = [A1, zeros(size(A1,1), 1)
+          A2,  ones(size(A2,1), 1)];
+    b = [b1; b2];
+    W = blkdiag(speye(length(kk)), 0.1*speye(length(kk2)));  % weight
+    cs_grav = (A' * W * A) \ (A' * W * b);
     
-    cs_grav = [A1 \ b1; 0, -9.81, 0];
+%     cs_grav = [A1 \ b1; 0, -9.81, 0];
     
     cs = cs_grav(1:end-1,:);
     grav = cs_grav(end,:);
@@ -294,7 +306,7 @@ end
 
 
 function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
-    bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab)
+    bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab, Tw, Ta, r, g13, ri)
 
     integ_npoints = 5;
     
@@ -303,14 +315,13 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     ah = zeros(length(time2_norm), 3);
     mtransh = zeros(length(time_norm), 3, nmarkers);
 
-    % [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)]
+    % [cq(:); cs(:); cwbias(:); cabias(:); tshift]
     index = reshape((1 : bord)' + (0 : 2)*nknot, [], 1);
     index_bias = reshape((1 : bord_bias)' + (0 : 2)*nknot_bias, [], 1);
-    index_imuparam = (1:23)';  % [Tw(:); Ta(:); r; g13]
-    index_omcparam_fix = [19:21, 24]';  % r, tshift
-    index_omcparam_var = (25:27)';  % ri
+    index_omcparam = 1;  % tshift
     
-    time_norm = time_norm + x(nknot*6 + nknot_bias*6 + 24);
+    time_norm = time_norm + x(nknot*6 + nknot_bias*6 + 1);
+    x(nknot*6 + nknot_bias*6 + 1) = 0;
 
     Nw_inv = diag(1./Nw);
     Na_inv = diag(1./Na);
@@ -319,12 +330,12 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     Nab_inv = diag(1./Nab);
     
     A_sparse = zeros(length(x) + ...
-        (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2 * (nknot + nknot_bias) + ...
-        (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2 * nknot * nmarkers + ...
+        (length(index)*2 + length(index_bias)*2)^2 * (nknot + nknot_bias) + ...
+        (length(index)*2 + length(index_omcparam))^2 * nknot * nmarkers + ...
         (length(index_bias)*2)^2 * (nknot_bias-bord_bias) * integ_npoints, 1);
     i_sparse = ones(length(x) + ...
-        (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2 * (nknot + nknot_bias) + ...
-        (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2 * nknot * nmarkers + ...
+        (length(index)*2 + length(index_bias)*2)^2 * (nknot + nknot_bias) + ...
+        (length(index)*2 + length(index_omcparam))^2 * nknot * nmarkers + ...
         (length(index_bias)*2)^2 * (nknot_bias-bord_bias) * integ_npoints, 1);
     j_sparse = i_sparse;
 
@@ -332,29 +343,24 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     cost = 0;
     
     % Prior ============================================================
-    % [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)]
+    % [cq(:); cs(:); cwbias(:); cabias(:); tshift]
 
-    % make prior
-    calib_confidence = 1e10;
+    % make prior (regularization)
+    c_confidence = 1e-5;
     buf = 1 : length(x);
-    A_sparse(buf,:) = [ones(nknot*3,1)/(0.2*pi/180)^2
-                    ones(nknot*3,1)/(1e-3)^2
-                    ones(nknot_bias*3,1)/(1e-2)^2
-                    ones(nknot_bias*3,1)/(1e-5)^2
-                    calib_confidence * ones(9,1)/(0.1)^2
-                    calib_confidence * ones(9,1)/(0.1)^2
-                    calib_confidence * ones(3,1)/(3e-2)^2
-                    calib_confidence * ones(2,1)/(0.1)^2
-                    ones(1,1)/(10e-3 / dT)^2
-                    calib_confidence * ones(3*nmarkers,1)/(0.5e-2)^2];
+    A_sparse(buf,:) = [c_confidence * ones(nknot*3,1)/(0.2*pi/180)^2
+                    c_confidence * ones(nknot*3,1)/(1e-3)^2
+                    c_confidence * ones(nknot_bias*3,1)/(1e-2)^2
+                    c_confidence * ones(nknot_bias*3,1)/(1e-5)^2
+                    c_confidence * ones(1,1)/(10e-3 / dT)^2];
     i_sparse(buf) = buf;
     j_sparse(buf) = buf;
     buf = buf + length(x);
 
     % IMU ==============================================================
-    buflen = (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2;
+    buflen = (length(index)*2 + length(index_bias)*2)^2;
     buf = buf(1) - 1 + (1 : buflen);
-    jac = zeros(length(index)*2 + length(index_bias)*2 + length(index_imuparam));
+    jac = zeros(length(index)*2 + length(index_bias)*2);
     k0_last = floor(time2_norm(1)); 
     k0_bias_last = floor(time_norm_bias(1));
     for k = 1 : length(time2_norm)
@@ -374,12 +380,11 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
         rows = [k0 + index
                 k0 + index + nknot*3
                 k0_bias + index_bias + nknot*6
-                k0_bias + index_bias + nknot*6 + nknot_bias*3
-                nknot*6 + nknot_bias*6 + index_imuparam];
+                k0_bias + index_bias + nknot*6 + nknot_bias*3];
         vars = x(rows);
 
-        [wh(k,:), ah(k,:), wjac, ajac] = calib_cost_imu(...
-            vars.', mod(time2_norm(k), 1), dT, mod(time_norm_bias(k), 1), dT_bias);
+        [wh(k,:), ah(k,:), wjac, ajac] = fuse_cost_imu(...
+            vars.', mod(time2_norm(k), 1), dT, mod(time_norm_bias(k), 1), dT_bias, Tw, Ta, g13);
 
         jac = jac + wjac' * Nw_inv * wjac ...
                   + ajac' * Na_inv * ajac;
@@ -397,9 +402,9 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     buf = buf + buflen;
 
    % OMC ===============================================================
-    buflen = (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2;
+    buflen = (length(index)*2 + length(index_omcparam))^2;
     buf = buf(1) - 1 + (1 : buflen);
-    jac = zeros(length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var));
+    jac = zeros(length(index)*2 + length(index_omcparam));
     k0_last = floor(time_norm(1)); 
     rows = [];
     for i = 1 : nmarkers
@@ -424,12 +429,11 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
             
             rows = [k0 + index
                     k0 + index + nknot*3
-                    nknot*6 + nknot_bias*6 + index_omcparam_fix
-                    nknot*6 + nknot_bias*6 + index_omcparam_var + 3*(i-1)];
+                    nknot*6 + nknot_bias*6 + index_omcparam];
             vars = x(rows);
 
-            [mtransh(k,:,i), rjac] = calib_cost_omc(...
-                vars.', mod(time_norm(k), 1), dT);
+            [mtransh(k,:,i), rjac] = fuse_cost_omc(...
+                vars.', mod(time_norm(k), 1), dT, r, ri(:,i));
             jac = jac + rjac' * Nr_inv * rjac;
             b(rows) = b(rows) - rjac' * Nr_inv * (mtrans(k,:,i) - mtransh(k,:,i))';
             cost = cost + (mtrans(k,:,i) - mtransh(k,:,i)) * Nr_inv * (mtrans(k,:,i) - mtransh(k,:,i))' / 2;
@@ -455,7 +459,7 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
         vars = x(rows);
         for kk = 1 : integ_npoints
             t = (kk - 1) / integ_npoints;
-            [wbiasd, abiasd, wbiasd_jac, abiasd_jac] = calib_cost_imubias( ...
+            [wbiasd, abiasd, wbiasd_jac, abiasd_jac] = fuse_cost_imubias( ...
                 vars', t, dT_bias);
 
             i_sparse(buf) = reshape(repmat(rows, [1, length(rows)]), [], 1);
@@ -470,11 +474,12 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
                           abiasd' * Nab_inv * abiasd * dT_bias / integ_npoints;
         end
     end
-    
-    A = sparse(i_sparse, j_sparse, A_sparse, length(x), length(x));
            
     if nargout > 0
-        dx = -A \ b;
+        A = sparse(i_sparse, j_sparse, A_sparse, length(x), length(x));
+        dx = -A \ b;  % fails with singular matrices
+%         dx = -pinv(A) * b;  % does not support sparse
+%         dx = lsqminnorm(A, -b);  % too slow
     
     else
         figure, 

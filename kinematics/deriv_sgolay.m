@@ -40,7 +40,7 @@ y = bsxfun(@plus, dx(:,:,1), xmean);
 yd = dx(:,:,2);
 ydd = dx(:,:,3);
 
-ord = order(1);
+ord = order(2);
 y(1:ord,:) = repmat(y(ord,:), [ord, 1]);
 yd(1:ord,:) = repmat(yd(ord,:), [ord, 1]);
 ydd(1:ord,:) = repmat(ydd(ord,:), [ord, 1]);

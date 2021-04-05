@@ -1,21 +1,26 @@
 %% Fusing IMU-OMC
 %% Load dataset
-clear, clc
-load('data/cable_driven_prosthesis2.mat', 'trial', 'omc_files')
+clear, %clc
+
+load('data/cable_driven_prosthesis1.mat', 'trial')
+% 1) IMU extrinsic
+% 2) IMU extrinsic (bugged)
+% 3) Wrench (bugged)
+% 4) Wrench
+
+% load('data/cable_driven_prosthesis2.mat', 'trial', 'omc_files')
 % 1) IMU extrinsic
 % 2) Wrench
 % 3) Active + Ext
 % 4) Active
 % 5) Walk
-tshifts = [11.1765-16.7456, 7.52077-5.08493, 2.17377-5.07619, 6.8-1.02965+0, 1.85355-3.68149];
 
 i = 1;
 t = trial(i);
-tshift = tshifts(i);
 
 % trange = [70, 122];  % trial 1
 % trange = [90, 100];  % trial 1
-trange = [50, 90];  % trial 4
+trange = [5, 120];  % trial 4
 % trange = [110, 120];  % trial 5
 tout = t.ptime;
 
@@ -34,10 +39,11 @@ mtime1 = t.mtime;
 quat1 = t.fquat;
 trans1 = t.ftrans;
 mtrans1 = t.mftrans;
-time_imu1 = t.stime1 + tshift;
+time_imu1 = t.stime;
 w_imu1 = t.w1;
 a_imu1 = t.a1;
-calib = load('data/foot_imu1_calib_full.mat');
+% calib = load('data/foot_imu1_calib_full.mat');
+calib = load('data/calib_foot_day1.mat');
 
 % viz ========================================================
 Fs_omc = 1 / mean(diff(mtime1));
@@ -90,38 +96,42 @@ start_opt_time = tic;
     mtime, quat, trans, mtrans, time_imu, w_imu, a_imu, calib, tout, trange);
 toc(start_opt_time)
 
+%%
+
+[q1, q3, q2] = quat2angle(quat1, 'YZY'); 
+qXZY = ([q1, q2, q3]);
+
+[q2, q3, q1] = quat2angle(quat1, 'YZX'); 
+qYZX = unwrap([q1, q2, q3]);
+
+w = QTMParser.body_rates(quat1, trans1, 183, [5, 15]);
+
+figure, 
+h1 = subplot(321); plot(mtime1, qXZY, '.-'), grid on
+h2 = subplot(323); plot(mtime1, qYZX, '.-'), grid on
+h3 = subplot(325); plot(mtime1, quat1(:,1:4), '.-'), grid on
+% h3 = subplot(313); plot(mtime, log_quat(quat), '.-'), grid on
+h4 = subplot(322); plot(time_imu1, (calib.Tw \ (w_imu1'))', '.-'), grid on
+h5 = subplot(324); plot(mtime1, w, '.-'), grid on
+
+linkaxes([h1, h2, h3, h4, h5], 'x')
+% xlim([56, 58])
+
 %% Upsample 
 
-time_norm = (tout - time0) / out_calib.params.dT + tshift;
-time_norm_bias = (tout - time0) / out_calib.params.dT_bias;
-
-% Euler YZX
-time_norm_shift = time_norm;
-time_norm_shift(time_norm_shift < 0) = 0;
-time_norm_shift(time_norm_shift > length(cq)-out_calib.params.bord) = length(cq)-out_calib.params.bord;
-
-time_norm_shift_bias = time_norm_bias;
-time_norm_shift_bias(time_norm_shift_bias < 0) = 0;
-time_norm_shift_bias(time_norm_shift_bias > length(cwbias)-out_calib.params.bord_bias) = length(cwbias)-out_calib.params.bord_bias;
-
-[qf, qdf, qddf] = bspline_eval(cq, time_norm_shift, out_calib.params.bord);
-[sf, sdf, sddf] = bspline_eval(cs, time_norm_shift, out_calib.params.bord);
-wbias = bspline_eval(cwbias, time_norm_shift_bias, out_calib.params.bord_bias);
-
-quatf = angle2quat(qf(:,2), qf(:,3), qf(:,1), 'YZX');
-transf = sf - quatrotate(quatinv(quatf), calib.r');
 
 Fs = 1 / mean(diff(tout));
 [w, wd, v, a] = QTMParser.body_rates(quat1, trans1, Fs_omc, [4, 13]);
 [wf, wdf, vf, af] = QTMParser.body_rates(quatf, transf, Fs, [4, 5]);
 
-figure, plot(mtime1, trans1, '.-')
+figure, 
+h1 = subplot(211); plot(mtime1, trans1, '.-')
 hold on, plot(tout, transf, '-'), grid on
-xlim(trange)
-figure, plot(mtime1, quat1, '.-')
-hold on, plot(tout, -quatf, '-'), grid on
-xlim(trange)
-
+% xlim(trange)
+h2 = subplot(212); plot(mtime1, quat1, '.-')
+hold on, plot(tout, quatf, '-'), grid on
+% xlim(trange)
+linkaxes([h1, h2], 'x')
 
 % figure, plot(mtime, w, '.-')
 % hold on, plot(time, wf, '-'), grid on
@@ -130,4 +140,33 @@ xlim(trange)
 % hold on, plot(time, af, '-'), grid on
 % xlim([1, mtime(end)-1])
 
+%%
+% trans2 = trans;
+% quat2 = quat;
+tt = mtime;
+trans2 = interp1(tout, transf, mtime);
+quat2 = interp1(tout, quatf, mtime);
 
+
+% ri = calib.params.ri;
+ri = out_calib.ri;
+mtransh = zeros(size(mtrans));
+for i = 1 : size(mtrans, 3)
+    mtransh(:,:,i) = quatrotate(quatinv(quat2), ri(:,i)') + trans2;
+end
+
+% figure
+% h1 = subplot(311); plot(mtime, squeeze(mtrans(:,1,:)))
+% hold on, set(gca, 'ColorOrderIndex', 1), plot(mtime, squeeze(mtransh(:,1,:)), '--')
+% h2 = subplot(312); plot(mtime, squeeze(mtrans(:,2,:)))
+% hold on, set(gca, 'ColorOrderIndex', 1), plot(mtime, squeeze(mtransh(:,2,:)), '--')
+% h3 = subplot(313); plot(mtime, squeeze(mtrans(:,3,:)))
+% hold on, set(gca, 'ColorOrderIndex', 1), plot(mtime, squeeze(mtransh(:,3,:)), '--')
+% linkaxes([h1, h2, h3], 'x')
+
+figure
+h1 = subplot(311); plot(tt, squeeze(mtrans(:,1,:) - mtransh(:,1,:)), '.-'), grid on
+h2 = subplot(312); plot(tt, squeeze(mtrans(:,2,:) - mtransh(:,2,:)), '.-'), grid on
+h3 = subplot(313); plot(tt, squeeze(mtrans(:,3,:) - mtransh(:,3,:)), '.-'), grid on
+linkaxes([h1, h2, h3], 'x')
+xlim(trange)

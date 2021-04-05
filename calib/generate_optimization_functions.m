@@ -20,6 +20,8 @@ skew_func = @(p) [0, -p(3), p(2)
 C_func = @(p) Ry(p(2)) * Rz(p(3)) * Rx(p(1));
 to_body_rates = @(p, pd) [pd(1); 0; 0] + Rx(p(1)).' * [0; 0; pd(3)] + (Rz(p(3)) * Rx(p(1))).' * [0; pd(2); 0];
 
+
+
 % B-spline basis ============================================
 syms t dt
 % plate pose, translated to the IMU center
@@ -89,19 +91,15 @@ sbody = ss - R * r;   % plate
 rj = sbody + R * ri;  % marker
 rj_shift = subs(rj, t, t+tshift);
 
-% vars_all = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; ri];
-vars_imu = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13];
-vars_bias = [cwbias(:); cabias(:)];
-% vars_omc = [cq(:); cs(:); r];
-vars_omc = [cq(:); cs(:); r; tshift; ri];
-% vars_time = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); g13];
-% vars_time = [cq(:); cs(:); cwbias(:); cabias(:)];
+% % calibration
+% vars_imu = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13];
+% vars_bias = [cwbias(:); cabias(:)];
+% vars_omc = [cq(:); cs(:); r; tshift; ri];
 
-% cost = (w_imu - w_meas).' * diag(Nw_inv) * (w_imu - w_meas) + ...
-%        (a_imu - a_meas).' * diag(Na_inv) * (a_imu - a_meas);
-% grad = jacobian(cost, vars_time);
-% hess = jacobian(grad, vars_time);
-% hess_flat = reshape(hess, 1, []);
+% fusion
+vars_imu = [cq(:); cs(:); cwbias(:); cabias(:)];
+vars_bias = [cwbias(:); cabias(:)];
+vars_omc = [cq(:); cs(:); tshift];
 
 w_imu_jac = jacobian(w_imu, vars_imu);
 a_imu_jac = jacobian(a_imu, vars_imu);
@@ -111,22 +109,25 @@ abiasd_jac = jacobian(abiasd, vars_bias);
 
 
 tic
+% matlabFunction(w_imu, a_imu, w_imu_jac, a_imu_jac, 'Vars', ...
+%     {vars_imu.', t, dt, t_bias, dt_bias}, ...
+%     'File', 'calib_cost_imu', 'Optimize', true)
+% matlabFunction(wbiasd, abiasd, wbiasd_jac, abiasd_jac, 'Vars', ...
+%     {vars_bias.', t_bias, dt_bias}, ...
+%     'File', 'calib_cost_imubias', 'Optimize', true)
+% matlabFunction(rj_shift, rj_jac, 'Vars', ...
+%     {vars_omc.', t, dt}, ...
+%     'File', 'calib_cost_omc', 'Optimize', true)
+
 matlabFunction(w_imu, a_imu, w_imu_jac, a_imu_jac, 'Vars', ...
-    {vars_imu.', t, dt, t_bias, dt_bias}, ...
-    'File', 'calib_cost_imu', 'Optimize', true)
+    {vars_imu.', t, dt, t_bias, dt_bias, Tw, Ta, g13}, ...
+    'File', 'fuse_cost_imu', 'Optimize', true)
 matlabFunction(wbiasd, abiasd, wbiasd_jac, abiasd_jac, 'Vars', ...
     {vars_bias.', t_bias, dt_bias}, ...
-    'File', 'calib_cost_imubias', 'Optimize', true)
+    'File', 'fuse_cost_imubias', 'Optimize', true)
 matlabFunction(rj_shift, rj_jac, 'Vars', ...
-    {vars_omc.', t, dt}, ...
-    'File', 'calib_cost_omc', 'Optimize', true)
-
-% matlabFunction(cost, grad, hess_flat, 'Vars', ...
-%     {vars_time.', w_meas.', a_meas.', Nw_inv, Na_inv, t, dt, t_bias, dt_bias, Tw, Ta, g13}, ...
-%     'File', 'fuse4_cost_imu', 'Optimize', true)
-% matlabFunction(w_imu.', a_imu.', 'Vars', ...
-%     {vars_time.', t, dt, t_bias, dt_bias, Tw, Ta, g13}, ...
-%     'File', 'fuse4_eval_imu', 'Optimize', true)
+    {vars_omc.', t, dt, r, ri}, ...
+    'File', 'fuse_cost_omc', 'Optimize', true)
 toc
 
 

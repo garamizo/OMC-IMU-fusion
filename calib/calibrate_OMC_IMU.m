@@ -14,7 +14,7 @@ assert(~any(isnan(trans(:))), 'Cannot have gap')
 
 bord = 4 + 1;
 bord_bias = 2 + 1;
-dT = 20e-3;
+dT = 15e-3;
 dT_bias = 100e-3;
 
 % Intrinsic params --------------------------------
@@ -279,7 +279,7 @@ function [cs, grav] = bspline_fit_translation(...
     kk, quat, trans, kk2, aimu, Ta, r, abias, bord, dt, nknot)
     % fit cs as the IMU position
 
-    trans_imu = trans + quatrotate(quat, r');
+    trans_imu = trans + quatrotate(quatinv(quat), r');
     quat_interp = quatnormalize(interp1(kk, quat, kk2, 'pchip', 'extrap'));
     as = quatrotate(quatinv(quat_interp), (aimu - abias') * inv(Ta)');
 
@@ -424,6 +424,7 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     buf = buf(1) - 1 + (1 : buflen);
     jac = zeros(length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var));
     k0_last = 0; 
+    rows = [];
     for i = 1 : nmarkers
         for k = 1 : length(time_norm)
 
@@ -433,7 +434,7 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
             
             k0 = floor(time_norm(k));
             
-            if k0_last ~= k0
+            if k0_last ~= k0 && ~isempty(rows)
                 i_sparse(buf) = reshape(repmat(rows, [1, length(rows)]), [], 1);
                 j_sparse(buf) = reshape(repmat(rows', [length(rows), 1]), [], 1);
                 A_sparse(buf) = reshape(jac, [], 1);
