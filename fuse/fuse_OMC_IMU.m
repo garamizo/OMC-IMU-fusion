@@ -114,12 +114,12 @@ for i = 1 : iters
     
     X(i,:) = x;
     Fval(i) = fval;
-    fprintf('Iter %2d)\tCost: %.4e\tDuration: %.3f\n', i, fval, titer)
+    fprintf('Iter %2d)\tCost: %.7e\tDuration: %.3f\n', i, fval, titer)
     
-    if i > 1 && (Fval(i-1) - fval)/Fval(i-1) < 1/10000
-        fprintf('Converged!\n')
-        break
-    end
+%     if i > 1 && (Fval(i-1) - fval)/Fval(i-1) < 1/10000
+%         fprintf('Converged!\n')
+%         break
+%     end
 end
 
 cq1 = reshape(x(1:3*nknot), [], 3);
@@ -217,25 +217,39 @@ end
 function [cq, wbias] = bspline_fit_orientation(...
     kk, quat, kk2, wimu, Tw, bord, dt, nknot)
 
-    [q1, q2, q3] = quat2angle(quat, 'YZX');
-    q = unwrap([q3, q1, q2]);
+    [q2, q3, q1] = quat2angle(quat, 'YZX');
+    q = unwrap([q1, q2, q3]);
     w = wimu * inv(Tw)';
+    
+    % to angular velocity
+    S = @(q) [1, cos(q(1))*sin(q(3)), 0
+              0, cos(q(1))*cos(q(3)), sin(q(1))
+              0, -sin(q(1)), cos(q(1))];
+    qd = zeros(size(w));
+    q_interp = interp1(kk, q, kk2);
+    for i = 1 : size(w, 1)
+        qd(i,:) = (S(q_interp(i,:)) \ w(i,:)')';
+    end
+    
+    % prior =================================================
+%     A0 = speye(nknot);
+%     b0 = zeros(nknot, 3);
 
     % position ==============================================
     A1 = generate_predictor_matrix(bord, kk, nknot, 1);
     b1 = q;
 
-%     % velocity ================================================
-%     A2 = generate_predictor_matrix(bord, kk2, nknot, 2) / dt;
-%     b2 = w;
-% 
-%     % combine ==================================================
-%     A = [A1, zeros(size(A1,1), 1)
-%           A2,  ones(size(A2,1), 1)];
-%     b = [b1; b2];
-%     W = blkdiag(speye(length(kk)), 0.1*speye(length(kk2)));  % weight
-%     cq_bias = (A' * W * A) \ (A' * W * b);
-    cq_bias = [A1 \ b1; zeros(1, 3)];
+    % velocity ================================================
+    A2 = generate_predictor_matrix(bord, kk2, nknot, 2) / dt;
+    b2 = qd;
+
+    % combine ==================================================
+    A = [A1, zeros(size(A1,1), 1)
+          A2,  ones(size(A2,1), 1)];
+    b = [b1; b2];
+    W = blkdiag(speye(length(kk))/2.5e-5, speye(length(kk2))/0.1e-3);  % weight
+    cq_bias = (A' * W * A) \ (A' * W * b);
+%     cq_bias = [A1 \ b1; zeros(1, 3)];
     
     cq = cq_bias(1:end-1,:);
     wbias = cq_bias(end,:) * Tw';
@@ -356,6 +370,7 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     i_sparse(buf) = buf;
     j_sparse(buf) = buf;
     buf = buf + length(x);
+    
 
     % IMU ==============================================================
     buflen = (length(index)*2 + length(index_bias)*2)^2;

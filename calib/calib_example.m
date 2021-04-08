@@ -11,7 +11,7 @@ clear, %clc
 % load('data\cable_driven_prosthesis3.mat', 'trial')
 % tshift_init = [11.1765-16.7456, 7.52077-5.08493, 2.17377-5.07619, 6.8-1.02965+0, 1.85355-3.68149];
 
-load('data\cable_driven_prosthesis1.mat', 'trial')
+load('data\cable_driven_prosthesis4.mat', 'trial')
 
 
 
@@ -22,25 +22,25 @@ t = trial(i);
 % trange = [70, 122];  % trial 1
 % trange = [90, 100];  % trial 1
 % trange = [3, 122];  % trial 1
-trange = [3, 120];  % trial 1
+trange = [14, 76];  % trial 1
 
 % shank ===========================
-mtime = t.mtime;
-quat = t.squat;
-trans = t.strans;
-mtrans = t.mstrans;
-time_imu = t.stime;
-w_imu = t.w2;
-a_imu = t.a2;
+% mtime = t.mtime;
+% quat = t.squat;
+% trans = t.strans;
+% mtrans = t.mstrans;
+% time_imu = t.stime2;
+% w_imu = t.w2;
+% a_imu = t.a2;
 
 % foot ============================
-% mtime = t.mtime;
-% quat = t.fquat;
-% trans = t.ftrans;
-% mtrans = t.mftrans;
-% time_imu = t.stime;
-% w_imu = t.w1;
-% a_imu = t.a1;
+mtime = t.mtime;
+quat = t.fquat;
+trans = t.ftrans;
+mtrans = t.mftrans;
+time_imu = t.stime1;
+w_imu = t.w1;
+a_imu = t.a1;
 
 % viz ========================================================
 [wd, w] = angular_rates(quat, Fs_omc, [3, 7]);

@@ -2,7 +2,7 @@
 %% Load dataset
 clear, %clc
 
-load('data/cable_driven_prosthesis1.mat', 'trial')
+load('data/cable_driven_prosthesis4.mat', 'trial')
 % 1) IMU extrinsic
 % 2) IMU extrinsic (bugged)
 % 3) Wrench (bugged)
@@ -20,7 +20,9 @@ t = trial(i);
 
 % trange = [70, 122];  % trial 1
 % trange = [90, 100];  % trial 1
-trange = [5, 120];  % trial 4
+% trange = [5, 120];  % trial 4
+trange = [14, 76];  % trial 1
+
 % trange = [110, 120];  % trial 5
 tout = t.ptime;
 
@@ -39,11 +41,11 @@ mtime1 = t.mtime;
 quat1 = t.fquat;
 trans1 = t.ftrans;
 mtrans1 = t.mftrans;
-time_imu1 = t.stime;
+time_imu1 = t.stime1;
 w_imu1 = t.w1;
 a_imu1 = t.a1;
 % calib = load('data/foot_imu1_calib_full.mat');
-calib = load('data/calib_foot_day1.mat');
+calib = load('data/calib_foot_day4.mat');
 
 % viz ========================================================
 Fs_omc = 1 / mean(diff(mtime1));
@@ -92,7 +94,7 @@ w_imu = w_imu1;
 a_imu = a_imu1;
 
 start_opt_time = tic;
-[cq, cs, cwbias, cabias, tshift, out_calib, quatf, transf] = fuse_OMC_IMU( ...
+[cq, cs, cwbias, cabias, ushift, out_calib, quatf, transf] = fuse_OMC_IMU( ...
     mtime, quat, trans, mtrans, time_imu, w_imu, a_imu, calib, tout, trange);
 toc(start_opt_time)
 
@@ -118,7 +120,8 @@ linkaxes([h1, h2, h3, h4, h5], 'x')
 % xlim([56, 58])
 
 %% Upsample 
-
+dT = 30e-3;
+tshift = -dT * ushift;
 
 Fs = 1 / mean(diff(tout));
 [w, wd, v, a] = QTMParser.body_rates(quat1, trans1, Fs_omc, [4, 13]);
@@ -126,10 +129,10 @@ Fs = 1 / mean(diff(tout));
 
 figure, 
 h1 = subplot(211); plot(mtime1, trans1, '.-')
-hold on, plot(tout, transf, '-'), grid on
+hold on, plot(tout + tshift, transf, '-'), grid on
 % xlim(trange)
 h2 = subplot(212); plot(mtime1, quat1, '.-')
-hold on, plot(tout, quatf, '-'), grid on
+hold on, plot(tout + tshift, quatf, '-'), grid on
 % xlim(trange)
 linkaxes([h1, h2], 'x')
 
