@@ -11,7 +11,8 @@ clear, %clc
 % load('data\cable_driven_prosthesis3.mat', 'trial')
 % tshift_init = [11.1765-16.7456, 7.52077-5.08493, 2.17377-5.07619, 6.8-1.02965+0, 1.85355-3.68149];
 
-load('data\cable_driven_prosthesis4.mat', 'trial')
+% load('data\cable_driven_prosthesis4.mat', 'trial')
+load('data\trial_plate_imu_extrinsics.mat', 'trial')
 
 
 
@@ -22,7 +23,8 @@ t = trial(i);
 % trange = [70, 122];  % trial 1
 % trange = [90, 100];  % trial 1
 % trange = [3, 122];  % trial 1
-trange = [14, 76];  % trial 1
+% trange = [14, 76];  % trial 1, shank and foot
+trange = [11, 64];  % plate
 
 % shank ===========================
 % mtime = t.mtime;
@@ -34,13 +36,22 @@ trange = [14, 76];  % trial 1
 % a_imu = t.a2;
 
 % foot ============================
+% mtime = t.mtime;
+% quat = t.fquat;
+% trans = t.ftrans;
+% mtrans = t.mftrans;
+% time_imu = t.stime1;
+% w_imu = t.w1;
+% a_imu = t.a1;
+
+% plate ============================
 mtime = t.mtime;
-quat = t.fquat;
-trans = t.ftrans;
-mtrans = t.mftrans;
-time_imu = t.stime1;
-w_imu = t.w1;
-a_imu = t.a1;
+quat = t.pquat;
+trans = t.ptrans;
+mtrans = t.mptrans;
+time_imu = t.time_imu;
+w_imu = t.w;
+a_imu = t.a;
 
 % viz ========================================================
 [wd, w] = angular_rates(quat, Fs_omc, [3, 7]);
@@ -84,7 +95,7 @@ t0 = tic;
     mtime, quat, trans, mtrans, time_imu, w_imu, a_imu);
 toc(t0)
 
-uisave({'Tw', 'Ta', 'r', 'g13', 'tshift', 'ri', 'x', 'params', 'cq', 'cs', 'cwbias', 'cabias'}, 'calib_foot_day1.mat')
+uisave({'Tw', 'Ta', 'r', 'g13', 'tshift', 'ri', 'x', 'params', 'cq', 'cs', 'cwbias', 'cabias'}, 'calib_plate.mat')
 
 %%
 calib.Tw = Tw;

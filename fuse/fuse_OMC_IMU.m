@@ -1,5 +1,5 @@
 function [cq1, cs1, cwbias1, cabias1, tshift1, out_calib, quatf, transf] = fuse_OMC_IMU( ...
-    time, quat, trans, mtrans, time_imu, w_imu, a_imu, calib, tout, trange)
+    time, quat, trans, mtrans, time_imu, w_imu, a_imu, calib, tout, trange, dT)
 % [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)]
 % The smoothing of high frequency data needs a filtering formulation of the
 % continuous-time batch estimation, not the global optimization that we use
@@ -20,7 +20,7 @@ end
 bord = calib.params.bord;
 bord_bias = calib.params.bord_bias;
 % dT = calib.params.dT;
-dT = 30e-3;
+% dT = 5e-3;
 dT_bias = calib.params.dT_bias;
 
 
@@ -114,12 +114,12 @@ for i = 1 : iters
     
     X(i,:) = x;
     Fval(i) = fval;
-    fprintf('Iter %2d)\tCost: %.7e\tDuration: %.3f\n', i, fval, titer)
+%     fprintf('Iter %2d)\tCost: %.7e\tDuration: %.3f\n', i, fval, titer)
     
-%     if i > 1 && (Fval(i-1) - fval)/Fval(i-1) < 1/10000
+    if i > 1 && (Fval(i-1) - fval)/Fval(i-1) < 1/10000
 %         fprintf('Converged!\n')
-%         break
-%     end
+        break
+    end
 end
 
 cq1 = reshape(x(1:3*nknot), [], 3);
@@ -138,8 +138,8 @@ out_calib = [];%struct('Tw', Tw1, 'Ta', Ta1, 'r', r1, 'g13', g131, 'tshift', tsh
 %     'params', struct('bord', bord, 'bord_bias', bord_bias, 'dT', dT, 'dT_bias', dT_bias, ...
 %     'Fs_omc', Fs_omc, 'Fs_imu', Fs_imu));
 
-solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
-        bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab, Tw, Ta, r, g13, ri);
+% solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
+%         bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab, Tw, Ta, r, g13, ri);
     
 % eval on desired time ============================================
 time_norm = (tout - t0) / dT + tshift;

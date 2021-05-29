@@ -76,29 +76,41 @@ cabias = repmat(abias', [nknot_bias, 1]);
 x0 = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)];
 % x0 = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13];
 
-iters = 30;
-X = zeros(iters, length(x0));
-Fval = zeros(iters, 1);
+iters = 10;
+X = zeros(length(x0), iters);
+Fval = Inf(iters, 1);
 x = x0;
-for i = 1 : iters
+
+lambda = 1;
+for iter = 1 : iters
     tic
     [dx, fval] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
         bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab);
     titer = toc;
-
-    if any(isnan(dx))
-        warning('Went NAN')
-        break
-    end
-    x = x + dx;
-    X(i,:) = x;
-    Fval(i) = fval;
-    fprintf('Iter %2d)\tCost: %.4e\tDuration: %.3f\n', i, fval, titer)
     
-    if i > 1 && (Fval(i-1) - fval)/Fval(i-1) < 1/10000
-        fprintf('Converged!\n')
-        break
+    X(:,iter) = x;
+    Fval(iter) = fval; 
+        
+    if fval <= min(Fval)
+        dx(isnan(dx)) = 0;
+        
+        x = x + lambda * dx;
+        lambda = min(lambda * 1.1, 1);
+%         lambda = lambda * 0.75;
+    else
+%         break
+        [~, bestiter] = min(Fval);
+        x = X(:,bestiter);
+        lambda = lambda * 0.75;
+        
+        if iter - bestiter > 5
+            break
+        end
     end
+    if mod(iter, 1) == 0
+        fprintf("cost = %.5e,\t Lambda = %.2e\n", fval, lambda)
+    end
+    
 end
 % figure, plot(X(:,end-10:end) - X(end,end-10:end), '.-')
 % figure, plot(X(:,1000) - X(end,1000), '.-')
@@ -317,8 +329,8 @@ end
 function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2_norm, w_imu, a_imu, time_norm_bias, ...
     bord, bord_bias, dT, dT_bias, nknot, nknot_bias, Nw, Na, Nr, Nwb, Nab)
 
-    time_norm = time_norm + x(nknot*6 + nknot_bias*6 + 24);
-    x(nknot*6 + nknot_bias*6 + 24) = 0;
+%     time_norm = time_norm + x(nknot*6 + nknot_bias*6 + 24);
+%     x(nknot*6 + nknot_bias*6 + 24) = 0;
     
     integ_npoints = 5;
     
@@ -352,21 +364,25 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
 
     b = zeros(length(x), 1);
     cost = 0;
+    buf = 1;
     
     % Prior ============================================================
     % [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)]
 
     buf = 1 : length(x);
-    A_sparse(buf,:) = [ones(nknot*3,1)/(0.2*pi/180)^2
-                    ones(nknot*3,1)/(1e-3)^2
-                    ones(nknot_bias*3,1)/(1e-2)^2
-                    ones(nknot_bias*3,1)/(1e-5)^2
-                    ones(9,1)/(0.1)^2
-                    ones(9,1)/(0.1)^2
-                    ones(3,1)/(3e-2)^2
-                    ones(2,1)/(0.1)^2
-                    ones(1,1)/(10e-3 / dT)^2
-                    ones(3*nmarkers,1)/(0.5e-2)^2];
+    P_diag_inv = 1 ./ [ ones(nknot*3,1) * 1*pi/180
+                        ones(nknot*3,1) * 10e-3
+                        ones(nknot_bias*3,1) * 1e-2
+                        ones(nknot_bias*3,1) * 1e-5
+                        ones(9,1) * 0.1
+                        ones(9,1) * 0.1
+                        ones(3,1) * 3e-2
+                        ones(2,1) * 0.1
+                        ones(1,1) * 100e-3 / dT
+                        ones(3*nmarkers,1) * 1e-3].^2;
+                
+    A_sparse(buf,:) = P_diag_inv;
+%     b(buf) = -(x - xprior) .* P_diag_inv;
     i_sparse(buf) = buf;
     j_sparse(buf) = buf;
     buf = buf + length(x);
@@ -494,6 +510,7 @@ function [dx, cost] = solve_gauss_newton_sparse_fast(x, time_norm, mtrans, time2
     if nargout > 0
         A = sparse(i_sparse, j_sparse, A_sparse, length(x), length(x));
         dx = -A \ b;
+%         dx = -(A + lambda*diag(diag(A))) \ b;
     
     else
         figure, 
