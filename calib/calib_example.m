@@ -1,120 +1,71 @@
 %% Extrinsic IMU-OMC calibration
-%% Load dataset
 clear, %clc
-% load('C:\Users\garamizo\Documents\GitHub\mocap-utils\vibrating_platform\data\plate_extrinsic_calibration.mat', 'trial')
-% load('data\cable_driven_prosthesis1.mat', 'trial')
-% tshift_init = [-49.2260, 0];
+addpath(genpath("C:\Users\garamizo\Documents\GitHub\OMC_IMU_fusion"))
 
-% load('data\cable_driven_prosthesis2.mat', 'trial')
-% tshift_init = [11.1765-16.7456, 7.52077-5.08493, 2.17377-5.07619, 6.8-1.02965+0, 1.85355-3.68149];
-
-% load('data\cable_driven_prosthesis3.mat', 'trial')
-% tshift_init = [11.1765-16.7456, 7.52077-5.08493, 2.17377-5.07619, 6.8-1.02965+0, 1.85355-3.68149];
-
-% load('data\cable_driven_prosthesis4.mat', 'trial')
-load('data\trial_plate_imu_extrinsics.mat', 'trial')
-
-
-
-Fs_omc = 183;
-
-i = 1;
-t = trial(i);
-% trange = [70, 122];  % trial 1
-% trange = [90, 100];  % trial 1
-% trange = [3, 122];  % trial 1
-% trange = [14, 76];  % trial 1, shank and foot
-trange = [11, 64];  % plate
-
-% shank ===========================
-% mtime = t.mtime;
-% quat = t.squat;
-% trans = t.strans;
-% mtrans = t.mstrans;
-% time_imu = t.stime2;
-% w_imu = t.w2;
-% a_imu = t.a2;
-
-% foot ============================
-% mtime = t.mtime;
-% quat = t.fquat;
-% trans = t.ftrans;
-% mtrans = t.mftrans;
-% time_imu = t.stime1;
-% w_imu = t.w1;
-% a_imu = t.a1;
-
-% plate ============================
-mtime = t.mtime;
-quat = t.pquat;
-trans = t.ptrans;
-mtrans = t.mptrans;
-time_imu = t.time_imu;
-w_imu = t.w;
-a_imu = t.a;
-
-% viz ========================================================
-[wd, w] = angular_rates(quat, Fs_omc, [3, 7]);
-[v, ~, a] = deriv_sgolay(trans, Fs_omc, [3, 7]);            
-figure, 
-% h1 = subplot(221); plot(t.mtime, w)
-h1 = subplot(221); plot(t.mtime, quat)
-ylabel('Body orientation [deg]'), grid on, xline(trange(1)), xline(trange(2))
-% h4 = subplot(222); plot(t.mtime, a)
-h4 = subplot(222); plot(t.mtime, a)
-ylabel('Body velocity [m/s]'), grid on, xline(trange(1)), xline(trange(2))
-h2 = subplot(223); plot(time_imu, w_imu)
-ylabel('\omega [rad/s]'), grid on, xline(trange(1)), xline(trange(2))
-h3 = subplot(224); plot(time_imu, a_imu)
-ylabel('a [m/s^2]'), grid on, xline(trange(1)), xline(trange(2))
-linkaxes([h1, h2, h3, h4], 'x')
-
-%% Select time range
-
-rows = find(mtime > trange(1) & mtime < trange(2));
-irows = find(time_imu > trange(1) & time_imu < trange(2));
-time0 = min(mtime(rows(1)), time_imu(irows(1)));
-mtime = mtime(rows,:) - time0;
-time_imu = time_imu(irows,:) - time0;
-
-quat = quat(rows,:);
-trans = trans(rows,:);
-mtrans = mtrans(rows,:,:);
-
-w_imu = w_imu(irows,:);
-a_imu = a_imu(irows,:);
-
-if any(isnan(trans(:))) || any(isnan(quat(:)))
-    warning('Interpolating gaps')
-    trans = fillgaps(trans);
-    quat = quatnormalize(fillgaps(quat));
-end
-
-t0 = tic;
-[cq, cs, cwbias, cabias, Tw, Ta, r, g13, tshift, ri, x, params] = calibrate_OMC_IMU( ...
-    mtime, quat, trans, mtrans, time_imu, w_imu, a_imu);
-toc(t0)
-
-uisave({'Tw', 'Ta', 'r', 'g13', 'tshift', 'ri', 'x', 'params', 'cq', 'cs', 'cwbias', 'cabias'}, 'calib_plate.mat')
+load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0510.mat')
 
 %%
-calib.Tw = Tw;
 
-[q2, q3, q1] = quat2angle(quat, 'YZX'); 
-qXZY = ([q1, q2, q3]);
+t = trial(3);
 
-[q2, q3, q1] = quat2angle(quat, 'YZX'); 
-qYZX = unwrap([q1, q2, q3]);
+cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2, t.w2, t.a2);
+% cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1, t.w1, t.a1);
 
-w = QTMParser.body_rates(quat, trans, 183, [5, 15]);
+cal.trange_ = [14, 155];
+% cal.trange_ = [14, 80];
 
-figure, 
-h1 = subplot(321); plot(mtime, qXZY, '.-'), grid on
-h2 = subplot(323); plot(mtime, qYZX, '.-'), grid on
-h3 = subplot(325); plot(mtime, quat(:,1:4), '.-'), grid on
-% h3 = subplot(313); plot(mtime, log_quat(quat), '.-'), grid on
-h4 = subplot(322); plot(time_imu, (calib.Tw \ (w_imu'))', '.-'), grid on
-h5 = subplot(324); plot(mtime, w, '.-'), grid on
+% figure, cal.plot_data()
 
-linkaxes([h1, h2, h3, h4, h5], 'x')
-% xlim([56, 58])
+tic
+[cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = cal.calibrate_LM();
+[T1, r1]    
+toc
+
+toffset = tshift1*cal.dT_;
+
+
+%% Fine-tune 
+
+fprintf("Fine tuning solution...\n")
+cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2 - toffset, t.w2, t.a2);
+% cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1 - toffset, t.w1, t.a1);
+
+cal.trange_ = [14, 155];
+[cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = cal.calibrate_LM();
+[T1, r1]
+
+toffset = toffset + tshift1*cal.dT_;
+
+%% Debug each stage
+
+% [Tw, Ta, wbias, abias, r, g] = calibrate_lsq(cal);  
+% cal.fit_bspline_orientation(Tw);
+% cal.fit_bspline_translation(Ta, r, abias);
+
+
+%% Check if OMC has wrong labeled marker
+
+% trans = t.ftrans;
+% quat = t.fquat;
+% mtrans = t.mftrans;
+% 
+% dlen = size(trans, 1);
+% nmarkers = size(mtrans, 3);
+% 
+% mres = zeros(dlen, nmarkers);
+% rms = zeros(3, nmarkers);
+% for i = 1 : nmarkers
+%     rms(:,i) = nanmedian(quatrotate(quat, mtrans(:,:,i) - trans));
+%     
+%     res = mtrans(:,:,i) - trans - quatrotate(quatinv(quat), rms(:,i)');
+%     mres(:,i) = sqrt(sum(res.^2, 2));
+% end
+% rms
+% 
+% [bft, aft] = fir1(50, 0.5/(183/2));
+% mres = filtfilt(bft, aft, fillmissing(mres, 'spline', 'EndValues', 'nearest'));
+% 
+% figure, 
+% h1 = subplot(211); plot(t.mtime, quat)
+% h2 = subplot(212); plot(t.mtime, mres)
+% linkaxes([h1, h2], 'x')

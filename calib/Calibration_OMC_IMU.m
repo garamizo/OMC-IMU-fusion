@@ -21,10 +21,10 @@ classdef Calibration_OMC_IMU < handle
         dT_bias_ = 100e-3
         integ_npoints_ = 5
         
-        sgolay_params_ = [4, 11]  % for LSQ method
+        sgolay_params_ = [4, 15]  % for LSQ method
         
         % Intrinsic params --------------------------------
-        Nr_ = ones(1, 3) * 0.4e-3^2;  % from QTM calibration, at 183 Hz
+        Nr_ = (1*ones(1, 3) * 0.4e-3).^2;  % from QTM calibration, at 183 Hz
         w_white = [0.3573, 0.2735, 0.2739] * 1e-3;
         a_white = [0.6213, 0.7069, 0.9750] * 1e-3;
         w_walk = [1.2448, 2.2278, 0.1894] * 1e-5;
@@ -63,7 +63,7 @@ classdef Calibration_OMC_IMU < handle
             linkaxes([h1, h2, h3, h4, h5, h6, h7], 'x')
         end
 
-        function [cq1, cs1, cwbias1, cabias1, Tw1, Ta1, r1, g131, tshift1, ri1, x] = calibrate_LM(obj)
+        function [cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = calibrate_LM(obj)
             
             [mtime, quat, trans, mtrans, itime, w_imu, a_imu] = obj.get_data();
             [time_norm, time2_norm, time_norm_bias, nknot, nknot_bias, integ_npoints, ...
@@ -76,29 +76,36 @@ classdef Calibration_OMC_IMU < handle
             
             % Estimate initial approximate solution ================================
             [Tw, Ta, wbias, abias, r, g] = obj.calibrate_lsq();
-            [cq, wbias2] = obj.fit_bspline_orientation(Tw);
-            [cs, g2] = obj.fit_bspline_translation(Ta, r, abias);
+            T = quat2rotm(rotm2quat(0.5*Tw + 0.5*Ta));
+            [cq, wbias2] = obj.fit_bspline_orientation(T);
+            [cs, g2] = obj.fit_bspline_translation(T, r, abias);
             cwbias = repmat(wbias', [nknot_bias, 1]);
             cabias = repmat(abias', [nknot_bias, 1]);
+            
+            qq = [atan2(-T(2,3), T(2,2))
+                  atan2(-T(3,1), T(1,1))
+                  asin(T(2,1))];
             
             g13 = g([1,3]);
             
             nmarkers = size(mtrans, 3);
             ri = zeros(3, nmarkers);
             for j = 1 : nmarkers
-                ri(:,j) = nanmean(quatrotate(quat, mtrans(:,:,j) - trans));
+                ri(:,j) = nanmedian(quatrotate(quat, mtrans(:,:,j) - trans));
             end
             tshift = 0;
             
-            x0 = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)];
+%             qq, r, g13
+            
+            x0 = [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13; tshift; ri(:)];
             
             % Setup variables ===========================================
-            % [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)]
+            % [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13; tshift; ri(:)]
             index = reshape((1 : bord)' + (0 : 2)*nknot, [], 1);
             index_bias = reshape((1 : bord_bias)' + (0 : 2)*nknot_bias, [], 1);
-            index_imuparam = (1:23)';  % [Tw(:); Ta(:); r; g13]
-            index_omcparam_fix = [19:21, 24]';  % r, tshift
-            index_omcparam_var = (25:27)';  % ri
+            index_imuparam = (1:8)';  % [qq; r; g13]
+            index_omcparam_fix = [4:6, 9]';  % r, tshift
+            index_omcparam_var = (10:12)';  % ri
 
             Nw_inv = diag(1./Nw);
             Na_inv = diag(1./Na);
@@ -107,59 +114,62 @@ classdef Calibration_OMC_IMU < handle
             Nab_inv = diag(1./Nab);
             
             % Iterate ==================================================
-            max_iters = 5;
+            max_iters = 20;
             X = zeros(length(x0), max_iters);
             Fval = Inf(max_iters, 1);
+            Lambda = zeros(max_iters, 1);
             x = x0;
  
-            lambda = 0.1;
+            lambda = 1e-8;
+            
             for iter = 1 : max_iters
                 [dx, fval] = LM_iteration(x, lambda);
 
                 X(:,iter) = x;
-                Fval(iter) = fval; 
+                Fval(iter) = fval;
+                Lambda(iter) = lambda;
+                
+                if mod(iter, 1) == 0
+                    fprintf("%d) cost = %.5e,\t Lambda = %.2e", iter, fval, lambda)
+                end
 
                 if fval <= min(Fval)
-                    dx(isnan(dx)) = 0;
-
                     x = x + dx;
-                    lambda = max(lambda / 5, 1e-3);
+                    lambda = max(lambda / 3, 1e-20);
+                    fprintf(" *\n");
                     
                 else
                     [~, bestiter] = min(Fval);
                     x = X(:,bestiter);
-                    lambda = min(lambda * 2, 1);
+                    lambda = Lambda(bestiter) * (iter - bestiter);
+                    fprintf("\n");
 
                     if iter - bestiter > 5
                         break
                     end
                 end
-                if mod(iter, 1) == 0
-                    fprintf("%d) cost = %.5e,\t Lambda = %.2e\n", iter, fval, lambda)
-                end
-
             end
             
             cq1 = reshape(x(1:3*nknot), [], 3);
             cs1 = reshape(x(3*nknot + (1:3*nknot)), [], 3);
             cwbias1 = reshape(x(6*nknot + (1:3*nknot_bias)), [], 3);
             cabias1 = reshape(x(6*nknot + 3*nknot_bias + (1:3*nknot_bias)), [], 3);
-            Tw1 = reshape(x(6*nknot + 6*nknot_bias + (1:9)), 3, 3);
-            Ta1 = reshape(x(6*nknot + 6*nknot_bias + (10:18)), 3, 3);
-            r1 = reshape(x(6*nknot + 6*nknot_bias + (19:21)), 3, 1);
-            g131 = reshape(x(6*nknot + 6*nknot_bias + (22:23)), 2, 1);
-            tshift1 = reshape(x(6*nknot + 6*nknot_bias + 24), 1, 1);
-            ri1 = reshape(x(6*nknot + 6*nknot_bias + 24 + (1:nmarkers*3)), 3, []);
+            qq1 = reshape(x(6*nknot + 6*nknot_bias + (1:3)), 3, 1);
+            T1 = Ry(qq1(2)) * Rz(qq1(3)) * Rx(qq1(1));
+            r1 = reshape(x(6*nknot + 6*nknot_bias + (4:6)), 3, 1);
+            g131 = reshape(x(6*nknot + 6*nknot_bias + (7:8)), 2, 1);
+            tshift1 = reshape(x(6*nknot + 6*nknot_bias + 9), 1, 1);
+            ri1 = reshape(x(6*nknot + 6*nknot_bias + 9 + (1:nmarkers*3)), 3, []);
             
             figure, plot_LM(x0), sgtitle("before")
             figure, plot_LM(x), sgtitle("after")
 
             function [dx, cost] = LM_iteration(x, lambda)
 
-                tshifti = 0;
-%                 x(nknot*6 + nknot_bias*6 + 24) = 0;
-%                 tshifti = x(nknot*6 + nknot_bias*6 + 24);
-
+%                 tshifti = 0;
+                tshifti = x(nknot*6 + nknot_bias*6 + 9);
+                x(nknot*6 + nknot_bias*6 + 9) = 0;
+                
                 A_sparse = zeros(length(x) + ...
                     (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2 * (nknot + nknot_bias) + ...
                     (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2 * nknot * nmarkers + ...
@@ -173,27 +183,6 @@ classdef Calibration_OMC_IMU < handle
                 b = zeros(length(x), 1);
                 cost = 0;
                 buf = 1;
-
-                % Prior ============================================================
-                % [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift; ri(:)]
-
-                buf = 1 : length(x);
-                P_diag_inv = 1 ./ [ ones(nknot*3,1) * 1*pi/180
-                                    ones(nknot*3,1) * 10e-3
-                                    ones(nknot_bias*3,1) * 1e-2
-                                    ones(nknot_bias*3,1) * 1e-5
-                                    ones(9,1) * 0.1
-                                    ones(9,1) * 0.1
-                                    ones(3,1) * 3e-2
-                                    ones(2,1) * 0.1
-                                    ones(1,1) * 100e-3 / dT
-                                    ones(3*nmarkers,1) * 1e-3].^2;
-
-                A_sparse(buf,:) = P_diag_inv;
-            %     b(buf) = -(x - xprior) .* P_diag_inv;
-                i_sparse(buf) = buf;
-                j_sparse(buf) = buf;
-                buf = buf + length(x);
 
                 % IMU ==============================================================
                 buflen = (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2;
@@ -316,15 +305,16 @@ classdef Calibration_OMC_IMU < handle
                 end
 
                 A = sparse(i_sparse, j_sparse, A_sparse, length(x), length(x));
-%                 dx = -(A + lambda*diag(diag(A))) \ b;
-                dx = - A \ b;
+
+                rows = any(A ~= 0, 1);
+                dx = zeros(length(x), 1);
+                dx(rows) = -(A(rows,rows) + lambda*diag(diag(A(rows,rows)))) \ b(rows);
             end
             
             function plot_LM(x)
-%%
-                tshifti = 0;
-%                 x(nknot*6 + nknot_bias*6 + 24) = 0;
-%                 tshifti = x(nknot*6 + nknot_bias*6 + 24);
+%                 tshifti = 0;
+                tshifti = x(nknot*6 + nknot_bias*6 + 9);
+                x(nknot*6 + nknot_bias*6 + 9) = 0;
 
                 % IMU ==============================================================
                 wh = zeros(length(time2_norm), 3);
@@ -406,8 +396,7 @@ classdef Calibration_OMC_IMU < handle
                 linkaxes([h1, h2, h3, h4, h5, h6, h7, h8], 'x')
             end
         end
-        
-        
+             
         function [mtime_norm, itime_norm, btime_norm, nknot, nknot_bias, ...
                 integ_npoints, Nw, Na, Nr, Nwb, Nab] = get_bspline_vars(obj)
             
@@ -501,12 +490,17 @@ classdef Calibration_OMC_IMU < handle
         function [cs, grav] = fit_bspline_translation(obj, Ta, r, abias)
 
             trans_std = 1;
-            acc_std = 1;
+            acc_std = 10;
  
             [kk, kk2, ~, nknot] = obj.get_bspline_vars();
-            [mtime, quat, trans, ~, itime, ~, aimu] = obj.get_data();
+            [mtime, quat, trans, ~, itime, ~, aimu, gaps] = obj.get_data();
             bord = obj.bord_;
             dt = obj.dT_;
+            
+            kk(gaps) = [];
+            mtime(gaps) = [];
+            quat(gaps,:) = [];
+            trans(gaps,:) = [];
             
             % fit cs as the IMU position
             trans_imu = trans + quatrotate(quatinv(quat), r');
@@ -571,8 +565,9 @@ classdef Calibration_OMC_IMU < handle
             
             % =========================================
             
-            [time, quat, trans, ~, time_imu, w_imu, a_imu] = obj.get_data();
+            [time, quat, trans, ~, time_imu, w_imu, a_imu, gaps] = obj.get_data();
             Fs = 1 / median(diff(time));
+            gaps = imdilate(gaps, strel('rectangle', [sgolay_params(2)*2, 1]));
 
             [wd, w] = angular_rates(quat, Fs, sgolay_params);
             [~, ~, a] = deriv_sgolay(trans, Fs, sgolay_params);
@@ -580,7 +575,7 @@ classdef Calibration_OMC_IMU < handle
             % Gyro =============================================
             w_imu_interp = interp1(time_imu, w_imu, time);
 
-            rows = 10 : size(w,1)-10;  % remove transient errors from derivative
+            rows = time > time(1) + 0.1 & time < time(end) - 0.1 & ~gaps;  % remove transient errors from derivative
             lm1 = fitlm(w(rows,:), w_imu_interp(rows,1), 'RobustOpts', 'on');
             lm2 = fitlm(w(rows,:), w_imu_interp(rows,2), 'RobustOpts', 'on');
             lm3 = fitlm(w(rows,:), w_imu_interp(rows,3), 'RobustOpts', 'on');
@@ -601,16 +596,17 @@ classdef Calibration_OMC_IMU < handle
             dlen = size(quat, 1);
             A = zeros(dlen*3, 18);
             b = zeros(dlen*3, 1);
-
+            valid = true(size(b));
             for i = 10 : dlen-10  % avoid transients
                 rows = (i-1)*3 + (1:3);
                 A(rows,:) = [blkdiag(a_imu_interp(i,:), a_imu_interp(i,:), a_imu_interp(i,:)), ...
                              skew_func(wd(i,:)) + skew_func(w(i,:))*skew_func(w(i,:)), ...
                              R(:,:,i)', eye(3)];
                 b(rows) = a(i,:) * R(:,:,i);
+                valid(rows) = ~gaps(i);
             end
 
-            lm = fitlm(A, b, 'RobustOpts', 'on', 'intercept', false);
+            lm = fitlm(A(valid,:), b(valid), 'RobustOpts', 'on', 'intercept', false);
 
             Ta = inv(reshape(lm.Coefficients.Estimate(1:9), [3, 3])');
             r = -lm.Coefficients.Estimate(10:12);
@@ -621,6 +617,8 @@ classdef Calibration_OMC_IMU < handle
             % reconstruct IMU measurements using OMC + calib
             wh = w * Tw' + wbias';
             ah = quatrotate(quat, (a - g')) * Ta' + abias';
+            wh(gaps,:) = NaN;
+            ah(gaps,:) = NaN;
             w_error = wh - interp1(time_imu, w_imu, time);
             a_error = ah - interp1(time_imu, a_imu, time);
             
@@ -649,14 +647,22 @@ classdef Calibration_OMC_IMU < handle
             a = obj.a_;
         end
         
-        function [mtime, quat, trans, mtrans, itime, w, a] = get_data(obj)
+        function [mtime, quat, trans, mtrans, itime, w, a, gaps] = get_data(obj)
             [mtime, quat, trans, mtrans, itime, w, a] = obj.get_raw_data();
             trange = obj.trange_;
             
             rows = mtime >= trange(1) & mtime <= trange(end);
+            gaps = any(isnan(trans(rows,:)), 2);
             mtime = mtime(rows);
-            quat = quatnormalize(fillmissing(quat(rows,:), 'spline', 'EndValues', 'nearest'));
-            trans = fillmissing(trans(rows,:), 'spline', 'EndValues', 'nearest');
+            R = fillmissing(reshape(quat2rotm(quat(rows,:)), 9, [])', 'linear', 'EndValues', 'nearest');
+            quat = rotm2quat(reshape(R', 3, 3, []));
+            for i = 2 : size(quat, 1)
+                if sum(abs(quat(i,:) - quat(i-1,:))) > sum(abs(quat(i,:) + quat(i-1,:)))
+                    quat(i,:) = -quat(i,:);
+                end
+            end
+%             quat = quatnormalize(fillmissing(quat(rows,:), 'linear', 'EndValues', 'nearest'));
+            trans = fillmissing(trans(rows,:), 'linear', 'EndValues', 'nearest');
             mtrans = mtrans(rows,:,:);
             
             rows = itime >= trange(1) & itime <= trange(end);
@@ -685,24 +691,6 @@ classdef Calibration_OMC_IMU < handle
 
             % orientation representation ============================
             [rotm_fcn, w_fcn] = Calibration_OMC_IMU.generate_EulerYZX_transformation();
-            
-            % Euler angles YZX
-            % Euler-Rodrigues params ===============================
-%             p = sym('p', [3, 1]);
-%             pd = sym('pd', [3, 1]);
-%             quat = [sqrt(1-p.'*p), p.'];
-%             quatd = [-p.'*pd / sqrt(1 - p.'*p), pd.'];
-%             w = 2 * quatmultiply_sym(quatconj_sym(quat), quatd);
-%             w = w(2:end).';
-%             to_body_rates = matlabFunction(w, 'Vars', {p, pd});
-%             C_func = @(p) quat2rotm_sym([sqrt(1-p.'*p), p.']);
-%             
-%             quat2params = @(quat) quat(:,2:4) .* sign(quat(:,1));
-%             
-%             w = sym('w', [3, 1]);
-%             quat = sym('quat', [1, 4]);
-%             quatd = quatmultiply_sym(quat, [0, w.']);
-%             quatw2paramsd = @(quat, w) quatd(2:4).';
 
             % B-spline basis ============================================
             syms t dt
@@ -734,8 +722,12 @@ classdef Calibration_OMC_IMU < handle
 
             % extrinsic parameters ==============================
             r = sym('r', [3, 1]);  % plate to sensor
-            Ta = sym('Ta', [3, 3]);
-            Tw = sym('Tw', [3, 3]);
+            qq = sym('qq', [3, 1]);
+            T = Ry(qq(2)) * Rz(qq(3)) * Rx(qq(1));
+%             quat = [sqrt(1 - qq.'*qq), qq.'];
+%             T = quat2rotm_sym(quat);
+%             Ta = sym('Ta', [3, 3]);
+%             Tw = sym('Tw', [3, 3]);
             g13 = sym('g', [2, 1]);
             g = [g13(1); -sqrt(9.80136^2 + g13.'*g13); g13(2)];
             ri = sym('ri', [3, 1]);  % plate to marker, plate frame
@@ -745,15 +737,15 @@ classdef Calibration_OMC_IMU < handle
             % IMU
             R = rotm_fcn(qp);  % plate orientation
 
-            w_imu = Tw * wp + wbias;
-            a_imu = Ta * R.' * (as - g) + abias;
+            w_imu = T * wp + wbias;
+            a_imu = T * R.' * (as - g) + abias;
 
             sbody = ss - R * r;   % plate
             rj = sbody + R * ri;  % marker
             rj_shift = subs(rj, t, t+tshift);
 
             % % calibration
-            vars_imu = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13];
+            vars_imu = [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13];
             vars_bias = [cwbias(:); cabias(:)];
             vars_omc = [cq(:); cs(:); r; tshift; ri];
 
