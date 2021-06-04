@@ -2,17 +2,24 @@
 clear, %clc
 addpath(genpath("C:\Users\garamizo\Documents\GitHub\OMC_IMU_fusion"))
 
-load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0510.mat')
+% load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0510.mat'); i = 3;
+load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0602.mat'); i = 1;
+
+t = trial(i);
 
 %%
 
-t = trial(3);
-
-cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2, t.w2, t.a2);
+% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2, t.w2, t.a2);
 % cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1, t.w1, t.a1);
+% cal.trange_ = [14, 155];
 
-cal.trange_ = [14, 155];
-% cal.trange_ = [14, 80];
+% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime_mcu + linspace(0, 1e-5, length(t.stime_mcu))', ...
+%                                                                  t.fw_raw * 0.0625 * pi/180, ...
+%                                                                  t.fa_raw * 0.000976 * 9.81);
+cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime_mcu + linspace(0, 1e-5, length(t.stime_mcu))', ...
+                                                                 t.sw_raw * 0.0625 * pi/180, ...
+                                                                 t.sa_raw * 0.000976 * 9.81);
+cal.trange_ = [7.5, 160];
 
 % figure, cal.plot_data()
 
@@ -27,8 +34,8 @@ toffset = tshift1*cal.dT_;
 %% Fine-tune 
 
 fprintf("Fine tuning solution...\n")
-cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2 - toffset, t.w2, t.a2);
-% cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1 - toffset, t.w1, t.a1);
+% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2 - toffset, t.w2, t.a2);
+cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1 - toffset, t.w1, t.a1);
 
 cal.trange_ = [14, 155];
 [cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = cal.calibrate_LM();

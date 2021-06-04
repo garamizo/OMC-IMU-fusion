@@ -13,7 +13,6 @@ classdef Calibration_OMC_IMU < handle
         
         trange_
         
-        
         % params =========================================
         bord_ = 4 + 1
         bord_bias_ = 2 + 1
@@ -35,7 +34,11 @@ classdef Calibration_OMC_IMU < handle
         function obj = Calibration_OMC_IMU(mtime, quat, trans, mtrans, itime, w, a)
             %UNTITLED2 Construct an instance of this class
             %   Detailed explanation goes here
-            obj.set_data(mtime, quat, trans, mtrans, itime, w, a);
+            
+            itime_fix = obj.sync_quat_w(mtime, quat, itime, w);
+            
+            
+            obj.set_data(mtime, quat, trans, mtrans, itime_fix, w, a);
             obj.trange_ = [max(mtime(1), itime(1)), min(mtime(end), itime(end))];
         end
         
@@ -105,7 +108,7 @@ classdef Calibration_OMC_IMU < handle
             index_bias = reshape((1 : bord_bias)' + (0 : 2)*nknot_bias, [], 1);
             index_imuparam = (1:8)';  % [qq; r; g13]
             index_omcparam_fix = [4:6, 9]';  % r, tshift
-            index_omcparam_var = (10:12)';  % ri
+            index_omcparam_var = (10:12)';  % ri (first of)
 
             Nw_inv = diag(1./Nw);
             Na_inv = diag(1./Na);
@@ -114,7 +117,7 @@ classdef Calibration_OMC_IMU < handle
             Nab_inv = diag(1./Nab);
             
             % Iterate ==================================================
-            max_iters = 20;
+            max_iters = 10;
             X = zeros(length(x0), max_iters);
             Fval = Inf(max_iters, 1);
             Lambda = zeros(max_iters, 1);
@@ -123,32 +126,44 @@ classdef Calibration_OMC_IMU < handle
             lambda = 1e-8;
             
             for iter = 1 : max_iters
-                [dx, fval] = LM_iteration(x, lambda);
-
-                X(:,iter) = x;
-                Fval(iter) = fval;
-                Lambda(iter) = lambda;
+                [Ai, bi, fval] = LM_iteration(x);
                 
                 if mod(iter, 1) == 0
                     fprintf("%d) cost = %.5e,\t Lambda = %.2e", iter, fval, lambda)
                 end
 
-                if fval <= min(Fval)
-                    x = x + dx;
-                    lambda = max(lambda / 3, 1e-20);
+                if fval < min(Fval)
+                    A = Ai;
+                    b = bi;
+                    xopt = x;
+                    
+                    if iter > 1 && iter - 1 == iopt
+                        lambda = lambda / 3;
+                    end
+                    iopt = iter;
                     fprintf(" *\n");
                     
                 else
-                    [~, bestiter] = min(Fval);
-                    x = X(:,bestiter);
-                    lambda = Lambda(bestiter) * (iter - bestiter);
+                    lambda = lambda * 3 * 10;
                     fprintf("\n");
 
-                    if iter - bestiter > 5
+                    if iter - iopt > 5
                         break
                     end
                 end
+                
+                X(:,iter) = x;
+                Fval(iter) = fval;
+                Lambda(iter) = lambda;
+                
+                valid_rows = any(A ~= 0, 1);
+                dx = zeros(length(x), 1);
+                dx(valid_rows) = -(A(valid_rows,valid_rows) + lambda*diag(diag(A(valid_rows,valid_rows)))) \ b(valid_rows);
+
+                x = xopt + dx;
+                lambda = max(lambda / 3, 1e-20);
             end
+            x = xopt;
             
             cq1 = reshape(x(1:3*nknot), [], 3);
             cs1 = reshape(x(3*nknot + (1:3*nknot)), [], 3);
@@ -164,7 +179,7 @@ classdef Calibration_OMC_IMU < handle
             figure, plot_LM(x0), sgtitle("before")
             figure, plot_LM(x), sgtitle("after")
 
-            function [dx, cost] = LM_iteration(x, lambda)
+            function [A, b, cost] = LM_iteration(x)
 
 %                 tshifti = 0;
                 tshifti = x(nknot*6 + nknot_bias*6 + 9);
@@ -305,10 +320,6 @@ classdef Calibration_OMC_IMU < handle
                 end
 
                 A = sparse(i_sparse, j_sparse, A_sparse, length(x), length(x));
-
-                rows = any(A ~= 0, 1);
-                dx = zeros(length(x), 1);
-                dx(rows) = -(A(rows,rows) + lambda*diag(diag(A(rows,rows)))) \ b(rows);
             end
             
             function plot_LM(x)
@@ -571,9 +582,14 @@ classdef Calibration_OMC_IMU < handle
 
             [wd, w] = angular_rates(quat, Fs, sgolay_params);
             [~, ~, a] = deriv_sgolay(trans, Fs, sgolay_params);
+            
+            % time delay ================================
+            toffset = 0;
+            
+            time_imu_shift = time_imu - toffset;
 
             % Gyro =============================================
-            w_imu_interp = interp1(time_imu, w_imu, time);
+            w_imu_interp = interp1(time_imu_shift, w_imu, time);
 
             rows = time > time(1) + 0.1 & time < time(end) - 0.1 & ~gaps;  % remove transient errors from derivative
             lm1 = fitlm(w(rows,:), w_imu_interp(rows,1), 'RobustOpts', 'on');
@@ -590,7 +606,7 @@ classdef Calibration_OMC_IMU < handle
                               p(3), 0, -p(1)
                               -p(2), p(1), 0];
 
-            a_imu_interp = interp1(time_imu, a_imu, time);
+            a_imu_interp = interp1(time_imu_shift, a_imu, time);
             R = quat2rotm(quat);
 
             dlen = size(quat, 1);
@@ -619,16 +635,16 @@ classdef Calibration_OMC_IMU < handle
             ah = quatrotate(quat, (a - g')) * Ta' + abias';
             wh(gaps,:) = NaN;
             ah(gaps,:) = NaN;
-            w_error = wh - interp1(time_imu, w_imu, time);
-            a_error = ah - interp1(time_imu, a_imu, time);
+            w_error = wh - interp1(time_imu_shift, w_imu, time);
+            a_error = ah - interp1(time_imu_shift, a_imu, time);
             
             fprintf("w error: MAE (%.2f, %.2f, %.2f) rad/s\n", nanmean(abs(w_error)))
             fprintf("a error: MAE (%.2f, %.2f, %.2f) m/s^2\n", nanmean(abs(a_error)))
             
             figure
-            h1 = subplot(221); plot(time_imu, w_imu, 'linewidth', 2), grid on, title('\omega [rad/s]')
+            h1 = subplot(221); plot(time_imu_shift, w_imu, 'linewidth', 2), grid on, title('\omega [rad/s]')
             hold on, set(gca, 'ColorOrderIndex', 1), plot(time, wh, '-')
-            h2 = subplot(222); plot(time_imu, a_imu, 'linewidth', 2), grid on, title('a [m/s^2]')
+            h2 = subplot(222); plot(time_imu_shift, a_imu, 'linewidth', 2), grid on, title('a [m/s^2]')
             hold on, set(gca, 'ColorOrderIndex', 1), plot(time, ah, '-')
             h3 = subplot(223); plot(time, w_error)
             grid on, title('error [rad/s]')
@@ -665,7 +681,7 @@ classdef Calibration_OMC_IMU < handle
             trans = fillmissing(trans(rows,:), 'linear', 'EndValues', 'nearest');
             mtrans = mtrans(rows,:,:);
             
-            rows = itime >= trange(1) & itime <= trange(end);
+            rows = itime >= mtime(1) & itime <= mtime(end);
             itime = itime(rows);
             w = w(rows,:);
             a = a(rows,:);
@@ -681,6 +697,7 @@ classdef Calibration_OMC_IMU < handle
            obj.a_ = a;
         end
         
+
     end
     
     methods (Static)
@@ -867,6 +884,68 @@ classdef Calibration_OMC_IMU < handle
 
             valid = ii(:) > 0 & jj(:) > 0;
             A = sparse(ii(valid), jj(valid), aa(valid), nsamples, nknot);
+        end
+        
+        function time2_fix = sync_quat_w(time, quat, time2, w)
+
+            Fs_omc = 1 / median(diff(time));
+            Fs_sd = 1 / median(diff(time2));
+
+            % First pass, use LP signals ===========================================
+            [bft, aft] = butter(5, 1/(Fs_omc/2));  % LP
+
+            [~, wa] = angular_rates(quat, Fs_omc, [5, 11]);
+            wa_abs = fillmissing(sqrt(sum(wa.^2, 2)), 'constant', 0);
+            wa_filt = filtfilt(bft, aft, wa_abs);
+
+            % downsample IMUs
+            [bft, aft] = butter(5, 1/(Fs_sd/2));
+            wb_abs = sqrt(sum(w.^2, 2));
+            wb_filt_down = interp1(time2, filtfilt(bft, aft, wb_abs), time);
+
+            d = finddelay(wa_filt, wb_filt_down, round(60*Fs_omc));
+            time2_fix = time2 - d/Fs_omc;
+
+            % Second pass use unfiltered signal =======================================
+
+            dT = 20.0;  % comparison window
+
+            if nargout == 0, figure, end
+            for reps = 1 : 6
+                wa_abs_up = interp1(time, wa_abs, time2_fix);
+
+                tcomp = ((time(1)+dT) : dT : (time(end)-dT))';
+                dd = zeros(size(tcomp));
+                for i = 1 : length(tcomp)
+                    rows = time2_fix > tcomp(i) - dT/2 & time2_fix < tcomp(i) + dT/2;
+
+                    dd(i) = finddelay(wa_abs_up(rows), wb_abs(rows), round(1.0*Fs_sd));
+                end
+
+                lm = fitlm(tcomp, dd, 'RobustOpts', 'on');
+
+                time2_fix = (time2_fix - lm.Coefficients.Estimate(1)/Fs_sd) * ...
+                    (-lm.Coefficients.Estimate(2)/Fs_sd + 1);
+
+                if nargout == 0
+                    subplot(2,3,reps), plot(lm)
+                end
+            end
+
+            assert(abs(lm.Coefficients.Estimate(1)/Fs_sd) < 1e-3 && ...
+                   lm.Coefficients.Estimate(2)/Fs_sd < 1e-4 && ...
+                   prctile(abs(wa_abs_up - wb_abs), 90) < 2, "Time sync failed")
+
+            % nanstd(wa_abs_up - wb_abs)
+            % prctile(abs(wa_abs_up - wb_abs), 90)
+
+            if nargout == 0
+                figure, 
+                subplot(121),
+                plot(time2_fix, wb_abs, '.-')
+                hold on, plot(time, wa_abs, '.-')
+                subplot(122), histogram(wa_abs_up - wb_abs, 100)
+            end
         end
     end
         
