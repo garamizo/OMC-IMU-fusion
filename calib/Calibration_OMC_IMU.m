@@ -23,7 +23,7 @@ classdef Calibration_OMC_IMU < handle
         sgolay_params_ = [4, 15]  % for LSQ method
         
         % Intrinsic params --------------------------------
-        Nr_ = (1*ones(1, 3) * 0.4e-3).^2;  % from QTM calibration, at 183 Hz
+        Nr_ = (1*ones(1, 3) * 1.4e-3).^2;  % from QTM calibration, at 183 Hz
         w_white = [0.3573, 0.2735, 0.2739] * 1e-3;
         a_white = [0.6213, 0.7069, 0.9750] * 1e-3;
         w_walk = [1.2448, 2.2278, 0.1894] * 1e-5;
@@ -66,7 +66,7 @@ classdef Calibration_OMC_IMU < handle
             linkaxes([h1, h2, h3, h4, h5, h6, h7], 'x')
         end
 
-        function [cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = calibrate_LM(obj)
+        function [cq1, cs1, cwbias1, cabias1, Tw1, Ta1, r1, g131, tshift1, ri1, x] = calibrate_LM(obj)
             
             [mtime, quat, trans, mtrans, itime, w_imu, a_imu] = obj.get_data();
             [time_norm, time2_norm, time_norm_bias, nknot, nknot_bias, integ_npoints, ...
@@ -85,9 +85,9 @@ classdef Calibration_OMC_IMU < handle
             cwbias = repmat(wbias', [nknot_bias, 1]);
             cabias = repmat(abias', [nknot_bias, 1]);
             
-            qq = [atan2(-T(2,3), T(2,2))
-                  atan2(-T(3,1), T(1,1))
-                  asin(T(2,1))];
+%             qq = [atan2(-T(2,3), T(2,2))
+%                   atan2(-T(3,1), T(1,1))
+%                   asin(T(2,1))];
             
             g13 = g([1,3]);
             
@@ -99,16 +99,14 @@ classdef Calibration_OMC_IMU < handle
             tshift = 0;
             
 %             qq, r, g13
-            
-            x0 = [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13; tshift; ri(:)];
+            x0 = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13; tshift];
             
             % Setup variables ===========================================
             % [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13; tshift; ri(:)]
             index = reshape((1 : bord)' + (0 : 2)*nknot, [], 1);
             index_bias = reshape((1 : bord_bias)' + (0 : 2)*nknot_bias, [], 1);
-            index_imuparam = (1:8)';  % [qq; r; g13]
-            index_omcparam_fix = [4:6, 9]';  % r, tshift
-            index_omcparam_var = (10:12)';  % ri (first of)
+            index_imuparam = (1:23)';  % [qw; qa; r; g13]
+            index_omcparam_fix = [19:21, 24]';  % r, tshift
 
             Nw_inv = diag(1./Nw);
             Na_inv = diag(1./Na);
@@ -117,7 +115,7 @@ classdef Calibration_OMC_IMU < handle
             Nab_inv = diag(1./Nab);
             
             % Iterate ==================================================
-            max_iters = 10;
+            max_iters = 15;
             X = zeros(length(x0), max_iters);
             Fval = Inf(max_iters, 1);
             Lambda = zeros(max_iters, 1);
@@ -139,7 +137,10 @@ classdef Calibration_OMC_IMU < handle
                     
                     if iter > 1 && iter - 1 == iopt
                         lambda = lambda / 3;
+                        
                     end
+                    
+                    
                     iopt = iter;
                     fprintf(" *\n");
                     
@@ -151,6 +152,7 @@ classdef Calibration_OMC_IMU < handle
                         break
                     end
                 end
+%                 lambda = max(lambda, 1e-8);
                 
                 X(:,iter) = x;
                 Fval(iter) = fval;
@@ -161,20 +163,29 @@ classdef Calibration_OMC_IMU < handle
                 dx(valid_rows) = -(A(valid_rows,valid_rows) + lambda*diag(diag(A(valid_rows,valid_rows)))) \ b(valid_rows);
 
                 x = xopt + dx;
-                lambda = max(lambda / 3, 1e-20);
+%                 lambda = max(lambda / 3, 1e-20);
             end
             x = xopt;
+            
+            % [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13; tshift; ri(:)]
+            index_imuparam = (1:23)';  % [qw; qa; r; g13]
+            index_omcparam_fix = [19:21, 24]';  % r, tshift
             
             cq1 = reshape(x(1:3*nknot), [], 3);
             cs1 = reshape(x(3*nknot + (1:3*nknot)), [], 3);
             cwbias1 = reshape(x(6*nknot + (1:3*nknot_bias)), [], 3);
             cabias1 = reshape(x(6*nknot + 3*nknot_bias + (1:3*nknot_bias)), [], 3);
-            qq1 = reshape(x(6*nknot + 6*nknot_bias + (1:3)), 3, 1);
-            T1 = Ry(qq1(2)) * Rz(qq1(3)) * Rx(qq1(1));
-            r1 = reshape(x(6*nknot + 6*nknot_bias + (4:6)), 3, 1);
-            g131 = reshape(x(6*nknot + 6*nknot_bias + (7:8)), 2, 1);
-            tshift1 = reshape(x(6*nknot + 6*nknot_bias + 9), 1, 1);
-            ri1 = reshape(x(6*nknot + 6*nknot_bias + 9 + (1:nmarkers*3)), 3, []);
+%             qq1 = reshape(x(6*nknot + 6*nknot_bias + (1:3)), 3, 1);
+%             qw1 = reshape(x(6*nknot + 6*nknot_bias + (1:3)), 3, 1);
+%             qa1 = reshape(x(6*nknot + 6*nknot_bias + (4:6)), 3, 1);
+%             Tw1 = Ry(qw1(2)) * Rz(qw1(3)) * Rx(qw1(1));
+%             Ta1 = Ry(qa1(2)) * Rz(qa1(3)) * Rx(qa1(1));
+            Tw1 = reshape(x(6*nknot + 6*nknot_bias + (1:9)), 3, 3);
+            Ta1 = reshape(x(6*nknot + 6*nknot_bias + (10:18)), 3, 3);
+            r1 = reshape(x(6*nknot + 6*nknot_bias + (19:21)), 3, 1);
+            g131 = reshape(x(6*nknot + 6*nknot_bias + (22:23)), 2, 1);
+            tshift1 = reshape(x(6*nknot + 6*nknot_bias + 24), 1, 1);
+            ri1 = ri;
             
             figure, plot_LM(x0), sgtitle("before")
             figure, plot_LM(x), sgtitle("after")
@@ -182,16 +193,16 @@ classdef Calibration_OMC_IMU < handle
             function [A, b, cost] = LM_iteration(x)
 
 %                 tshifti = 0;
-                tshifti = x(nknot*6 + nknot_bias*6 + 9);
-                x(nknot*6 + nknot_bias*6 + 9) = 0;
+                tshifti = x(nknot*6 + nknot_bias*6 + 24);
+                x(nknot*6 + nknot_bias*6 + 24) = 0;
                 
                 A_sparse = zeros(length(x) + ...
                     (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2 * (nknot + nknot_bias) + ...
-                    (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2 * nknot * nmarkers + ...
+                    (length(index)*2 + length(index_omcparam_fix))^2 * nknot * nmarkers + ...
                     (length(index_bias)*2)^2 * (nknot_bias-bord_bias) * integ_npoints, 1);
                 i_sparse = ones(length(x) + ...
                     (length(index)*2 + length(index_bias)*2 + length(index_imuparam))^2 * (nknot + nknot_bias) + ...
-                    (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2 * nknot * nmarkers + ...
+                    (length(index)*2 + length(index_omcparam_fix))^2 * nknot * nmarkers + ...
                     (length(index_bias)*2)^2 * (nknot_bias-bord_bias) * integ_npoints, 1);
                 j_sparse = i_sparse;
 
@@ -245,9 +256,9 @@ classdef Calibration_OMC_IMU < handle
                 buf = buf + buflen;
 
                % OMC ===============================================================
-                buflen = (length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var))^2;
+                buflen = (length(index)*2 + length(index_omcparam_fix))^2;
                 buf = buf(1) - 1 + (1 : buflen);
-                jac = zeros(length(index)*2 + length(index_omcparam_fix) + length(index_omcparam_var));
+                jac = zeros(length(index)*2 + length(index_omcparam_fix));
                 k0_last = 0; 
                 rows = [];
                 for i = 1 : nmarkers
@@ -272,12 +283,11 @@ classdef Calibration_OMC_IMU < handle
 
                         rows = [k0 + index
                                 k0 + index + nknot*3
-                                nknot*6 + nknot_bias*6 + index_omcparam_fix
-                                nknot*6 + nknot_bias*6 + index_omcparam_var + 3*(i-1)];
+                                nknot*6 + nknot_bias*6 + index_omcparam_fix];
                         vars = x(rows);
 
                         [mtransh, rjac] = Calibration_OMC_IMU_cost_omc(...
-                            vars.', mod(time_norm(k) + tshifti, 1), dT);
+                            vars.', mod(time_norm(k) + tshifti, 1), dT, ri(:,i));
                         jac = jac + rjac' * Nr_inv * rjac;
                         b(rows) = b(rows) - rjac' * Nr_inv * (mtrans(k,:,i) - mtransh')';
                         cost = cost + (mtrans(k,:,i) - mtransh') * Nr_inv * (mtrans(k,:,i) - mtransh')' / 2;
@@ -324,8 +334,8 @@ classdef Calibration_OMC_IMU < handle
             
             function plot_LM(x)
 %                 tshifti = 0;
-                tshifti = x(nknot*6 + nknot_bias*6 + 9);
-                x(nknot*6 + nknot_bias*6 + 9) = 0;
+                tshifti = x(nknot*6 + nknot_bias*6 + 24);
+                x(nknot*6 + nknot_bias*6 + 24) = 0;
 
                 % IMU ==============================================================
                 wh = zeros(length(time2_norm), 3);
@@ -364,12 +374,11 @@ classdef Calibration_OMC_IMU < handle
 
                         rows = [k0 + index
                                 k0 + index + nknot*3
-                                nknot*6 + nknot_bias*6 + index_omcparam_fix
-                                nknot*6 + nknot_bias*6 + index_omcparam_var + 3*(i-1)];
+                                nknot*6 + nknot_bias*6 + index_omcparam_fix];
                         vars = x(rows);
 
                         mtransh(k,:,i) = Calibration_OMC_IMU_cost_omc(...
-                            vars.', mod(time_norm(k) + tshifti, 1), dT);
+                            vars.', mod(time_norm(k) + tshifti, 1), dT, ri(:,i));
                     end
                 end
                 cost_omc = squeeze(sum((mtrans - mtransh).^2 .* diag(Nr_inv)', 2));
@@ -501,7 +510,7 @@ classdef Calibration_OMC_IMU < handle
         function [cs, grav] = fit_bspline_translation(obj, Ta, r, abias)
 
             trans_std = 1;
-            acc_std = 10;
+            acc_std = 100;
  
             [kk, kk2, ~, nknot] = obj.get_bspline_vars();
             [mtime, quat, trans, ~, itime, ~, aimu, gaps] = obj.get_data();
@@ -528,19 +537,33 @@ classdef Calibration_OMC_IMU < handle
 
             % combine ==================================================
             A = [zeros(size(A1,1), 1), A1 
-                 ones(size(A2,1), 1), A2];
+                 -ones(size(A2,1), 1), A2];
             b = [b1; b2];
             W = blkdiag(speye(length(kk)) / trans_std, ...
                         speye(length(kk2)) / acc_std);  % weight
+
+%             A = blkdiag(1, A1);
+%             b = [0, -9.81, 0; b1];
+%             W = blkdiag(1, speye(length(kk)) / trans_std);  % weight
+
+
+%             rows = any(A ~= 0, 1);  % well defined variables
+            valid_rows = sum(A ~= 0) > 1;  % well defined variables
+            valid_rows(1) = true;
+
+            % add regularization
+%             reg_lambda = 1e3;
+%             A = [A; speye(nknot + 1)];
+%             b = [b; zeros(nknot + 1,3)];
+%             W = blkdiag(W, speye(nknot + 1) / reg_lambda);
             
-            rows = any(A ~= 0, 1);
-            if all(rows)
+            if all(valid_rows)
                 cs_grav = (A' * W * A) \ (A' * W * b);
             else
                 warning("Not all B coefficients can be estimated...");
-                cs_grav = (A(:,rows)' * W * A(:,rows)) \ (A(:,rows)' * W * b);
+                cs_grav = (A(:,valid_rows)' * W * A(:,valid_rows)) \ (A(:,valid_rows)' * W * b);
                 cs_grav = [cs_grav(1,:)
-                           interp1(find(rows(2:end)), cs_grav(2:end,:), 1:length(rows)-1, 'linear', 'extrap')];
+                           interp1(find(valid_rows(2:end)), cs_grav(2:end,:), 1:nknot, 'linear', 'extrap')];
             end
             
             grav = cs_grav(1,:);
@@ -549,7 +572,7 @@ classdef Calibration_OMC_IMU < handle
             if nargout == 0
                 bh = A * cs_grav;
                 b1h = bh(1:size(b1,1),:);
-                b2h = bh(size(b1,1)+1:end,:);
+                b2h = bh(size(b1,1)+(1:size(b2,1)),:);
 
                 fit = 1 - [goodnessOfFit(b1h, b1, 'NMSE'), goodnessOfFit(b2h, b2, 'NMSE')];
                 fprintf('Translation fitness (NMSE): [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]\n', ...
@@ -558,9 +581,11 @@ classdef Calibration_OMC_IMU < handle
                 figure
                 h1 = subplot(221); plot(mtime, b1, '--'), title("trans, OMC")
                 hold on, set(gca, 'ColorOrderIndex', 1), plot(mtime, b1h)
+                legend('meas x', 'meas y', 'meas z', 'est x', 'est y', 'est z')
                 h3 = subplot(223); plot(mtime, b1 - b1h), title('error')
                 h2 = subplot(222); plot(itime, b2, '--'), title("acc, IMU")
                 hold on, set(gca, 'ColorOrderIndex', 1), plot(itime, b2h)
+                legend('meas x', 'meas y', 'meas z', 'est x', 'est y', 'est z')
                 h4 = subplot(224); plot(itime, b2 - b2h), title('error'), sgtitle('Fit B-spline translation')
                 linkaxes([h1, h2, h3, h4], 'x')
                 
@@ -739,12 +764,14 @@ classdef Calibration_OMC_IMU < handle
 
             % extrinsic parameters ==============================
             r = sym('r', [3, 1]);  % plate to sensor
-            qq = sym('qq', [3, 1]);
-            T = Ry(qq(2)) * Rz(qq(3)) * Rx(qq(1));
+%             qw = sym('qw', [3, 1]);
+%             qa = sym('qa', [3, 1]);
+%             Tw = Ry(qw(2)) * Rz(qw(3)) * Rx(qw(1));
+%             Ta = Ry(qa(2)) * Rz(qa(3)) * Rx(qa(1));
 %             quat = [sqrt(1 - qq.'*qq), qq.'];
 %             T = quat2rotm_sym(quat);
-%             Ta = sym('Ta', [3, 3]);
-%             Tw = sym('Tw', [3, 3]);
+            Ta = sym('Ta', [3, 3]);
+            Tw = sym('Tw', [3, 3]);
             g13 = sym('g', [2, 1]);
             g = [g13(1); -sqrt(9.80136^2 + g13.'*g13); g13(2)];
             ri = sym('ri', [3, 1]);  % plate to marker, plate frame
@@ -754,17 +781,17 @@ classdef Calibration_OMC_IMU < handle
             % IMU
             R = rotm_fcn(qp);  % plate orientation
 
-            w_imu = T * wp + wbias;
-            a_imu = T * R.' * (as - g) + abias;
+            w_imu = Tw * wp + wbias;
+            a_imu = Ta * R.' * (as - g) + abias;
 
             sbody = ss - R * r;   % plate
             rj = sbody + R * ri;  % marker
             rj_shift = subs(rj, t, t+tshift);
 
             % % calibration
-            vars_imu = [cq(:); cs(:); cwbias(:); cabias(:); qq; r; g13];
+            vars_imu = [cq(:); cs(:); cwbias(:); cabias(:); Tw(:); Ta(:); r; g13];
             vars_bias = [cwbias(:); cabias(:)];
-            vars_omc = [cq(:); cs(:); r; tshift; ri];
+            vars_omc = [cq(:); cs(:); r; tshift];
 
             w_imu_jac = jacobian(w_imu, vars_imu);
             a_imu_jac = jacobian(a_imu, vars_imu);
@@ -779,7 +806,7 @@ classdef Calibration_OMC_IMU < handle
                 {vars_bias.', t_bias, dt_bias}, ...
                 'File', 'Calibration_OMC_IMU_cost_imubias', 'Optimize', true)
             matlabFunction(rj_shift, rj_jac, 'Vars', ...
-                {vars_omc.', t, dt}, ...
+                {vars_omc.', t, dt, ri}, ...
                 'File', 'Calibration_OMC_IMU_cost_omc', 'Optimize', true)
         end
         

@@ -3,51 +3,37 @@ clear, %clc
 addpath(genpath("C:\Users\garamizo\Documents\GitHub\OMC_IMU_fusion"))
 
 % load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0510.mat'); i = 3;
-load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0602.mat'); i = 1;
+% load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis_calib_0602.mat'); i = 1;
+load('C:\Users\garamizo\Documents\GitHub\cdprosthesis-desktop\MATLAB\data\cable_driven_prosthesis4.mat'); i = 1;
 
 t = trial(i);
 
 %%
 
-% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2, t.w2, t.a2);
-% cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1, t.w1, t.a1);
-% cal.trange_ = [14, 155];
-
-% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime_mcu + linspace(0, 1e-5, length(t.stime_mcu))', ...
-%                                                                  t.fw_raw * 0.0625 * pi/180, ...
-%                                                                  t.fa_raw * 0.000976 * 9.81);
-cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime_mcu + linspace(0, 1e-5, length(t.stime_mcu))', ...
-                                                                 t.sw_raw * 0.0625 * pi/180, ...
-                                                                 t.sa_raw * 0.000976 * 9.81);
+cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.packet.t_sensor_sync, ...
+                                                                 t.packet.W1, ...
+                                                                 t.packet.A1);
+% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.packet.t_sensor_sync, ...
+%                                                                  t.packet.W2, ...
+%                                                                  t.packet.A2);
 cal.trange_ = [7.5, 160];
 
 % figure, cal.plot_data()
 
 tic
-[cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = cal.calibrate_LM();
-[T1, r1]    
+[cq1, cs1, cwbias1, cabias1, Tw1, Ta1, r1, g131, tshift1, ri1, x] = cal.calibrate_LM();
+[Tw1, r1]    
 toc
 
 toffset = tshift1*cal.dT_;
 
-
-%% Fine-tune 
-
-fprintf("Fine tuning solution...\n")
-% cal = Calibration_OMC_IMU(t.mtime, t.fquat, t.ftrans, t.mftrans, t.stime2 - toffset, t.w2, t.a2);
-cal = Calibration_OMC_IMU(t.mtime, t.squat, t.strans, t.mstrans, t.stime1 - toffset, t.w1, t.a1);
-
-cal.trange_ = [14, 155];
-[cq1, cs1, cwbias1, cabias1, T1, r1, g131, tshift1, ri1, x] = cal.calibrate_LM();
-[T1, r1]
-
-toffset = toffset + tshift1*cal.dT_;
+return
 
 %% Debug each stage
 
-% [Tw, Ta, wbias, abias, r, g] = calibrate_lsq(cal);  
-% cal.fit_bspline_orientation(Tw);
-% cal.fit_bspline_translation(Ta, r, abias);
+[Tw, Ta, wbias, abias, r, g] = calibrate_lsq(cal);  
+cal.fit_bspline_orientation(Tw);
+cal.fit_bspline_translation(Ta, r, abias);  % TODO Fix 
 
 
 %% Check if OMC has wrong labeled marker
