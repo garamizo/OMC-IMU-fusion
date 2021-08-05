@@ -16,7 +16,7 @@ classdef Calibration_OMC_IMU < handle
         % params =========================================
         bord_ = 4 + 1
         bord_bias_ = 2 + 1
-        dT_ = 15e-3
+        dT_ = 2e-3
         dT_bias_ = 100e-3
         integ_npoints_ = 5
         
@@ -24,10 +24,12 @@ classdef Calibration_OMC_IMU < handle
         
         % Intrinsic params --------------------------------
         Nr_ = (1*ones(1, 3) * 1.4e-3).^2;  % from QTM calibration, at 183 Hz
-        w_white = [0.3573, 0.2735, 0.2739] * 1e-3;
+        w_white = [0.3573, 0.2735, 0.2739] * 1e-3;  % std, at 800 Hz
         a_white = [0.6213, 0.7069, 0.9750] * 1e-3;
         w_walk = [1.2448, 2.2278, 0.1894] * 1e-5;
         a_walk = [0.9647, 1.7339, 2.4046] * 1e-6;
+        % The std of the random noise samples are obtained by multiplying
+        % the corresponding root PSD by the root of the sampling rate
     end
     
     methods
@@ -35,8 +37,8 @@ classdef Calibration_OMC_IMU < handle
             %UNTITLED2 Construct an instance of this class
             %   Detailed explanation goes here
             
-            itime_fix = obj.sync_quat_w(mtime, quat, itime, w);
-            
+%             itime_fix = QTMParser.sync_quat_w(mtime, quat, itime, w);
+            itime_fix = itime;
             
             obj.set_data(mtime, quat, trans, mtrans, itime_fix, w, a);
             obj.trange_ = [max(mtime(1), itime(1)), min(mtime(end), itime(end))];
@@ -137,9 +139,7 @@ classdef Calibration_OMC_IMU < handle
                     
                     if iter > 1 && iter - 1 == iopt
                         lambda = lambda / 3;
-                        
                     end
-                    
                     
                     iopt = iter;
                     fprintf(" *\n");
@@ -418,7 +418,7 @@ classdef Calibration_OMC_IMU < handle
         end
              
         function [mtime_norm, itime_norm, btime_norm, nknot, nknot_bias, ...
-                integ_npoints, Nw, Na, Nr, Nwb, Nab] = get_bspline_vars(obj)
+                integ_npoints, Nw, Na, Nr, Nwb, Nab, t0] = get_bspline_vars(obj)
             
             [time, ~, ~, ~, time_imu] = obj.get_data();
             dT = obj.dT_;
@@ -446,8 +446,8 @@ classdef Calibration_OMC_IMU < handle
         
         function [cq, wbias] = fit_bspline_orientation(obj, Tw)
 
-            angle_std = 0.2e-3;
-            vel_std = 0.1e-3;
+            angle_std = 0.2e-3 * 1e-2;
+            vel_std = 0.1e-2;
  
             [kk, kk2, ~, nknot] = obj.get_bspline_vars();
             [mtime, quat, ~, ~, itime, wimu] = obj.get_data();
@@ -509,8 +509,8 @@ classdef Calibration_OMC_IMU < handle
 
         function [cs, grav] = fit_bspline_translation(obj, Ta, r, abias)
 
-            trans_std = 1;
-            acc_std = 100;
+            trans_std = 0.01 * 1e-1;
+            acc_std = 1000;
  
             [kk, kk2, ~, nknot] = obj.get_bspline_vars();
             [mtime, quat, trans, ~, itime, ~, aimu, gaps] = obj.get_data();
@@ -722,7 +722,24 @@ classdef Calibration_OMC_IMU < handle
            obj.a_ = a;
         end
         
+        function [pquatf, ptransf] = eval(obj, time, cs, cq, calib)
+            
+            [~, ~, ~, nknot, ~, ...
+                ~, ~, ~, ~, ~, ~, t0] = obj.get_bspline_vars();
+            
+            k = (time - t0) / obj.dT_;
+%             k(k < 0) = 0;
+%             k(k > nknot) = (obj.mtime_(end) - t0) / obj.dT_;
+            
+            k(k < 0) = 0;
+            k(k > nknot - obj.bord_) = nknot - obj.bord_;
 
+            s = bspline_eval(cs, k, obj.bord_);
+            q = bspline_eval(cq, k, obj.bord_);
+
+            pquatf = angle2quat(q(:,2), q(:,3), q(:,1), 'YZX');
+            ptransf = s - quatrotate(quatinv(pquatf), calib.r');
+        end
     end
     
     methods (Static)
@@ -913,67 +930,6 @@ classdef Calibration_OMC_IMU < handle
             A = sparse(ii(valid), jj(valid), aa(valid), nsamples, nknot);
         end
         
-        function time2_fix = sync_quat_w(time, quat, time2, w)
-
-            Fs_omc = 1 / median(diff(time));
-            Fs_sd = 1 / median(diff(time2));
-
-            % First pass, use LP signals ===========================================
-            [bft, aft] = butter(5, 1/(Fs_omc/2));  % LP
-
-            [~, wa] = angular_rates(quat, Fs_omc, [5, 11]);
-            wa_abs = fillmissing(sqrt(sum(wa.^2, 2)), 'constant', 0);
-            wa_filt = filtfilt(bft, aft, wa_abs);
-
-            % downsample IMUs
-            [bft, aft] = butter(5, 1/(Fs_sd/2));
-            wb_abs = sqrt(sum(w.^2, 2));
-            wb_filt_down = interp1(time2, filtfilt(bft, aft, wb_abs), time);
-
-            d = finddelay(wa_filt, wb_filt_down, round(60*Fs_omc));
-            time2_fix = time2 - d/Fs_omc;
-
-            % Second pass use unfiltered signal =======================================
-
-            dT = 20.0;  % comparison window
-
-            if nargout == 0, figure, end
-            for reps = 1 : 6
-                wa_abs_up = interp1(time, wa_abs, time2_fix);
-
-                tcomp = ((time(1)+dT) : dT : (time(end)-dT))';
-                dd = zeros(size(tcomp));
-                for i = 1 : length(tcomp)
-                    rows = time2_fix > tcomp(i) - dT/2 & time2_fix < tcomp(i) + dT/2;
-
-                    dd(i) = finddelay(wa_abs_up(rows), wb_abs(rows), round(1.0*Fs_sd));
-                end
-
-                lm = fitlm(tcomp, dd, 'RobustOpts', 'on');
-
-                time2_fix = (time2_fix - lm.Coefficients.Estimate(1)/Fs_sd) * ...
-                    (-lm.Coefficients.Estimate(2)/Fs_sd + 1);
-
-                if nargout == 0
-                    subplot(2,3,reps), plot(lm)
-                end
-            end
-
-            assert(abs(lm.Coefficients.Estimate(1)/Fs_sd) < 1e-3 && ...
-                   lm.Coefficients.Estimate(2)/Fs_sd < 1e-4 && ...
-                   prctile(abs(wa_abs_up - wb_abs), 90) < 2, "Time sync failed")
-
-            % nanstd(wa_abs_up - wb_abs)
-            % prctile(abs(wa_abs_up - wb_abs), 90)
-
-            if nargout == 0
-                figure, 
-                subplot(121),
-                plot(time2_fix, wb_abs, '.-')
-                hold on, plot(time, wa_abs, '.-')
-                subplot(122), histogram(wa_abs_up - wb_abs, 100)
-            end
-        end
     end
         
 end

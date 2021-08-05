@@ -40,13 +40,24 @@ y = bsxfun(@plus, dx(:,:,1), xmean);
 yd = dx(:,:,2);
 ydd = dx(:,:,3);
 
-ord = order(2);
-y(1:ord,:) = repmat(y(ord,:), [ord, 1]);
-yd(1:ord,:) = repmat(yd(ord,:), [ord, 1]);
-ydd(1:ord,:) = repmat(ydd(ord,:), [ord, 1]);
-y(end-ord+1:end,:) = repmat(y(end-ord+1,:), [ord, 1]);
-yd(end-ord+1:end,:) = repmat(yd(end-ord+1,:), [ord, 1]);
-ydd(end-ord+1:end,:) = repmat(ydd(end-ord+1,:), [ord, 1]);
+% ord = order(2);
+% y(1:ord,:) = repmat(y(ord,:), [ord, 1]);
+% yd(1:ord,:) = repmat(yd(ord,:), [ord, 1]);
+% ydd(1:ord,:) = repmat(ydd(ord,:), [ord, 1]);
+% y(end-ord+1:end,:) = repmat(y(end-ord+1,:), [ord, 1]);
+% yd(end-ord+1:end,:) = repmat(yd(end-ord+1,:), [ord, 1]);
+% ydd(end-ord+1:end,:) = repmat(ydd(end-ord+1,:), [ord, 1]);
+
+ord = round(order(2) / 1);
+y([1:ord, end-ord+1:end],:) = x([1:ord, end-ord+1:end],:);
+yd([1:ord, end-ord+1:end],:) = [y(2,:) - y(1,:)
+                               (y(3:ord+1,:) - y(1:ord-1,:)) / 2
+                               (y(end-ord+2:end,:) - y(end-ord:end-2,:)) / 2
+                                y(end,:) - y(end-1,:)] * Fs;
+ydd([1:ord, end-ord+1:end],:) = [y(3,:) - 2*y(2,:) + y(1,:)
+                                (y(3:ord+1,:) - 2*y(2:ord,:) + y(1:ord-1,:)) / 2
+                                (y(end-ord+2:end,:) - 2*y(end-ord+1:end-1,:) + y(end-ord:end-2,:)) / 2
+                                 y(end,:) - 2*y(end-1,:) + y(end-2,:)] * Fs * Fs;
 
 
 
